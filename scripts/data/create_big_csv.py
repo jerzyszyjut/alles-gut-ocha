@@ -399,7 +399,11 @@ CLUSTER_COLORS = {
 
 def plot_neglect_ranking(df, top_n=25):
     plot_df = df.sort_values('neglect_index', ascending=True).tail(top_n).copy()
-    plot_df['country_label'] = plot_df['countryCode'] + ' – ' + plot_df['cluster']
+    def _iso3_to_name(code):
+        pc = pycountry.countries.get(alpha_3=code)
+        return pc.name if pc else code
+
+    plot_df['country_label'] = plot_df['countryCode'].map(_iso3_to_name) + ' – ' + plot_df['cluster']
     ys = range(len(plot_df))
 
     plt.style.use('seaborn-v0_8-whitegrid')
@@ -459,7 +463,7 @@ def plot_neglect_ranking(df, top_n=25):
     )
     for _, row in plot_df.iterrows():
         ax_scatter.annotate(
-            row['countryCode'],
+            _iso3_to_name(row['countryCode']),
             xy=(1 - row['coverage'], row['need_rank']),
             xytext=(3, 2), textcoords='offset points',
             fontsize=7, color='#333333',
