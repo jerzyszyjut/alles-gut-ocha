@@ -4,17 +4,7 @@ import React, { useState, useMemo } from 'react';
  * @param {Array} data - Array of objects (the CSV data)
  * @param {string} initialFocus - Optional initial search term
  */
-const CsvViewer = ({ data = [], filter, setFilter }) => {
-  const filteredData = useMemo(() => {
-    if (!filter) return data;
-    const lowerFilter = filter.toLowerCase();
-    return data.filter((row) =>
-      Object.values(row).some((val) =>
-        String(val).toLowerCase().includes(lowerFilter)
-      )
-    );
-  }, [data, filter]);
-
+const CsvViewer = ({ data = [], totalCount = 0, filter, setFilter }) => {
   if (!data || data.length === 0) return <p>No data available to view.</p>;
 
   // Extract headers from the first object
@@ -31,7 +21,7 @@ const CsvViewer = ({ data = [], filter, setFilter }) => {
           style={styles.searchInput}
         />
         <span style={styles.stats}>
-          Showing {filteredData.length} of {data.length} entries
+          Showing {data.length} of {totalCount} entries
         </span>
       </div>
 
@@ -45,7 +35,7 @@ const CsvViewer = ({ data = [], filter, setFilter }) => {
             </tr>
           </thead>
           <tbody>
-            {filteredData.map((row, i) => (
+            {data.map((row, i) => (
               <tr key={i} style={i % 2 === 0 ? styles.trEven : styles.trOdd}>
                 {headers.map((h) => (
                   <td key={h} style={styles.td}>

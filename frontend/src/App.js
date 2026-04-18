@@ -7,10 +7,19 @@ import WorldMap from "./WorldMap";
 function App() {
   const [filterText, setFilterText] = useState("");
 
-  const availableISOs = useMemo(() => {
-    // Replace 'ISO3' with the exact key name in your DUMMY_NEGLECT_DATA
-    return new Set(DUMMY_NEGLECT_DATA.map(row => row.countryCode)); 
-  }, []);
+  const filteredData = useMemo(() => {
+    if (!filterText) return DUMMY_NEGLECT_DATA;
+    const lowerFilter = filterText.toLowerCase();
+    return DUMMY_NEGLECT_DATA.filter((row) =>
+      Object.values(row).some((val) =>
+        String(val).toLowerCase().includes(lowerFilter)
+      )
+    );
+  }, [filterText]);
+
+  const searchMatches = useMemo(() => {
+    return new Set(filteredData.map(row => row.countryCode)); 
+  }, [filteredData]);
 
   return (
     <div style={styles.appContainer}>
@@ -18,13 +27,14 @@ function App() {
       <div style={styles.mainContent}>
         <WorldMap
           setHoveredCountry={setFilterText}
-          availableCountries={availableISOs}
+          availableCountries={searchMatches}
         />
 
         {/* CSV Viewer at the bottom */}
         <div style={styles.csvSection}>
           <CsvViewer 
-            data={DUMMY_NEGLECT_DATA}
+            data={filteredData}
+            totalCount={DUMMY_NEGLECT_DATA.length}
             filter={filterText} 
             setFilter={setFilterText}
           />
