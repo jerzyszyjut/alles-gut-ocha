@@ -183,7 +183,7 @@ def get_ranking(
         str, Query(description=f"Column to sort by. Valid: {', '.join(sorted(_VALID_SORT_FIELDS))}")
     ] = "neglect_index",
     sort_desc: Annotated[bool, Query(description="Sort descending")] = True,
-    limit: Annotated[int, Query(ge=1, le=5000, description="Max rows to return")] = 25,
+    limit: Annotated[int | None, Query(ge=1, description="Max rows to return (omit for all)")] = None,
     offset: Annotated[int, Query(ge=0, description="Rows to skip (for pagination)")] = 0,
     # ── Bootstrap ─────────────────────────────────────────────────────────────
     n_bootstrap: Annotated[
@@ -240,7 +240,7 @@ def get_ranking(
         df = df.sort_values(sort_by, ascending=ascending, na_position='last')
 
     # Paginate
-    page = df.iloc[offset: offset + limit]
+    page = df.iloc[offset:] if limit is None else df.iloc[offset: offset + limit]
 
     results = [_row_to_model(row, critical_threshold, high_threshold) for _, row in page.iterrows()]
     return RankingResponse(total_matches=total, returned=len(results), offset=offset, results=results)

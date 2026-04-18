@@ -243,7 +243,7 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "high_threshold": 0.6,
     "sort_by": "neglect_index",
     "sort_desc": True,
-    "limit": 25,
+    "limit": None,
 }
 
 # ── Execution helpers ─────────────────────────────────────────────────────────
@@ -295,9 +295,9 @@ def _execute_query(params: dict, df_base: pd.DataFrame) -> list[dict]:
     if sort_by in df.columns:
         df = df.sort_values(sort_by, ascending=not sort_desc, na_position="last")
 
-    limit = params.get("limit", 15)
+    limit = params.get("limit", None)
     rows = []
-    for _, row in df.head(limit).iterrows():
+    for _, row in (df.head(limit) if limit is not None else df).iterrows():
         rows.append({
             "countryCode": row["countryCode"],
             "countryName": iso3_to_name(row["countryCode"]),
@@ -394,7 +394,7 @@ def chat(
                 if block.name == "query_ranking":
                     # Merge tool params over current effective params
                     query_params = {**effective_params, **block.input}
-                    query_params.setdefault("limit", 15)
+                    query_params.setdefault("limit", None)
                     data = _execute_query(query_params, df_base)
                     tool_results.append({
                         "type": "tool_result",
@@ -411,7 +411,7 @@ def chat(
                     parameter_update = new_params
                     effective_params = new_params  # affects subsequent queries this turn
                     # Compute a fresh snapshot under the new params for the frontend
-                    snapshot = _execute_query({**new_params, "limit": 25}, df_base)
+                    snapshot = _execute_query({**new_params, "limit": None}, df_base)
                     ranking_snapshot = snapshot
                     tool_results.append({
                         "type": "tool_result",
