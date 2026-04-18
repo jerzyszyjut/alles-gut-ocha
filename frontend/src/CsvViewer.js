@@ -1,18 +1,35 @@
 import React from 'react';
 
-/**
- * @param {Array} data - Array of objects (the filtered CSV data)
- * @param {number} totalCount - Total number of entries before filtering
- * @param {string} filter - Current search/filter string
- * @param {function} setFilter - Function to update the search string
- */
+const HIDDEN_COLUMNS = new Set(['countryCode']);
+
+const COLUMN_LABELS = {
+  countryName: 'Country',
+  year: 'Year',
+  cluster: 'Cluster',
+  people_in_need: 'People in Need',
+  requirements_usd: 'Requirements (USD)',
+  funding_usd: 'Funding (USD)',
+  coverage: 'Coverage',
+  neglect_index: 'Neglect Index',
+  need_rank: 'Need Rank',
+  coverage_rank: 'Coverage Rank',
+  ipc_severity_score: 'IPC Severity Score',
+  uncertainty: 'Uncertainty',
+  priority_label: 'Priority',
+};
+
+const formatLabel = (key) =>
+  COLUMN_LABELS[key] ?? key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+const NON_NUMERIC_COLUMNS = new Set(['year', 'countryCode', 'countryName', 'cluster', 'priority_label']);
+
 const CsvViewer = ({ data = [], totalCount = 0, filter, setFilter }) => {
   let headers;
 
   if (!data || data.length === 0) {
     headers = [];
   } else {
-    headers = Object.keys(data[0]);
+    headers = Object.keys(data[0]).filter((h) => !HIDDEN_COLUMNS.has(h));
   }
 
   return (
@@ -35,7 +52,7 @@ const CsvViewer = ({ data = [], totalCount = 0, filter, setFilter }) => {
           <thead>
             <tr>
               {headers.map((h) => (
-                <th key={h} style={styles.th}>{h.replace(/_/g, ' ')}</th>
+                <th key={h} style={styles.th}>{formatLabel(h)}</th>
               ))}
             </tr>
           </thead>
@@ -44,17 +61,21 @@ const CsvViewer = ({ data = [], totalCount = 0, filter, setFilter }) => {
               <tr key={i} style={i % 2 === 0 ? styles.trEven : styles.trOdd}>
                 {headers.map((h) => {
                   const cellValue = row[h];
-                  const displayValue = typeof cellValue === 'number' 
-                    ? cellValue.toLocaleString(undefined, { maximumFractionDigits: 3 }) 
-                    : cellValue;
+                  const isEmpty = cellValue === null || cellValue === undefined || cellValue === '';
+
+                  const displayValue = isEmpty
+                    ? null
+                    : typeof cellValue === 'number' && !NON_NUMERIC_COLUMNS.has(h)
+                      ? cellValue.toLocaleString(undefined, { maximumFractionDigits: 3 })
+                      : cellValue;
 
                   return (
-                    <td 
-                      key={h} 
-                      style={styles.td} 
-                      title={String(cellValue)} // Native tooltip shows full text on hover
+                    <td
+                      key={h}
+                      style={isEmpty ? { ...styles.td, ...styles.tdEmpty } : styles.td}
+                      title={isEmpty ? undefined : String(cellValue)}
                     >
-                      {displayValue}
+                      {isEmpty ? <span style={styles.emptyCell}>—</span> : displayValue}
                     </td>
                   );
                 })}
@@ -121,7 +142,6 @@ const styles = {
     padding: '12px',
     borderBottom: '2px solid #e1e4e8',
     color: '#24292e',
-    textTransform: 'capitalize',
     zIndex: 1,
     whiteSpace: 'nowrap'
   },
@@ -136,6 +156,8 @@ const styles = {
   },
   trEven: { backgroundColor: '#fff' },
   trOdd: { backgroundColor: '#fafbfc' },
+  tdEmpty: { color: '#bbb' },
+  emptyCell: { userSelect: 'none' },
   noData: {
     padding: '20px',
     textAlign: 'center',
