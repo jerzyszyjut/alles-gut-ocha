@@ -162,17 +162,6 @@ const CsvViewer = ({
     );
   };
 
-  const isSelected = (row) =>
-    selectedCrisis &&
-    selectedCrisis.countryCode === row.countryCode &&
-    selectedCrisis.cluster === row.cluster;
-
-  const handleRowClick = (row) => {
-    if (onSelectCrisis) {
-      onSelectCrisis(isSelected(row) ? null : row);
-    }
-  };
-
   return (
     <div style={styles.container}>
       <div style={styles.toolbar}>
