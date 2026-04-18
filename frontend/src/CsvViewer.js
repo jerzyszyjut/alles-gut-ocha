@@ -4,9 +4,7 @@ import React, { useState, useMemo } from 'react';
  * @param {Array} data - Array of objects (the CSV data)
  * @param {string} initialFocus - Optional initial search term
  */
-const CsvViewer = ({ data = [], initialFocus = '' }) => {
-  const [filter, setFilter] = useState(initialFocus);
-
+const CsvViewer = ({ data = [], filter, setFilter }) => {
   const filteredData = useMemo(() => {
     if (!filter) return data;
     const lowerFilter = filter.toLowerCase();
@@ -28,8 +26,8 @@ const CsvViewer = ({ data = [], initialFocus = '' }) => {
         <input
           type="text"
           placeholder="Focus on country, cluster, or score..."
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
+          value={filter} // Now coming from props
+          onChange={(e) => setFilter(e.target.value)} // Now updating App.js state
           style={styles.searchInput}
         />
         <span style={styles.stats}>

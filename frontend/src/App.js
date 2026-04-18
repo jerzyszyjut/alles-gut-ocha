@@ -1,19 +1,25 @@
-import React from 'react';
+import React, { useState } from 'react';
 import Chat from './Chat';
 import CsvViewer from './CsvViewer';
 import { DUMMY_NEGLECT_DATA } from './dummy';
 import WorldMap from "./WorldMap";
 
 function App() {
+  const [filterText, setFilterText] = useState("");
+
   return (
     <div style={styles.appContainer}>
       {/* LEFT SIDE: Map (Top) and CSV (Bottom) */}
       <div style={styles.mainContent}>
-        <WorldMap />
+        <WorldMap setHoveredCountry={setFilterText} />
 
         {/* CSV Viewer at the bottom */}
         <div style={styles.csvSection}>
-          <CsvViewer data={DUMMY_NEGLECT_DATA} />
+          <CsvViewer 
+            data={DUMMY_NEGLECT_DATA}
+            filter={filterText} 
+            setFilter={setFilterText}
+          />
         </div>
       </div>
 
