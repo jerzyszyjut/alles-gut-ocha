@@ -1,13 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-const Chat = () => {
+const Chat = ({ currentParams, onUpdateState }) => {
   const [messages, setMessages] = useState([
-    { role: 'ai', content: 'Hello! How can I help you today?' }
+    // ADDED isGreeting flag so we know not to send this to the backend
+    { role: 'assistant', content: 'Hello! I am your humanitarian crisis analyst. I can explain the neglect index, adjust weights, or filter the data. How can I help?', isGreeting: true }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   
-  // Reference to auto-scroll to the bottom of the chat
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -23,35 +23,47 @@ const Chat = () => {
     if (!input.trim()) return;
 
     const userMessage = { role: 'user', content: input };
-    setMessages((prev) => [...prev, userMessage]);
+    const updatedMessages = [...messages, userMessage];
+    
+    setMessages(updatedMessages);
     setInput('');
     setIsLoading(true);
 
     try {
-      // REPLACE THIS URL with your actual Python backend endpoint (e.g., FastAPI, Flask)
-      const response = await fetch('http://localhost:8000/api/chat', {
+      // THE FIX: Strip out the initial greeting before sending to FastAPI!
+      const payloadMessages = updatedMessages
+        .filter(msg => !msg.isGreeting)
+        .map(msg => ({ role: msg.role, content: msg.content }));
+
+      const response = await fetch('http://localhost:8000/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: input }),
+        body: JSON.stringify({ 
+          messages: payloadMessages, // Send the cleaned array
+          current_params: currentParams || {} 
+        }),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch response from the server');
+        throw new Error(`Failed to fetch response: ${response.status}`);
       }
 
       const data = await response.json();
       
-      // Assuming your Python backend returns: { "reply": "The LLM's response..." }
-      const aiMessage = { role: 'ai', content: data.reply };
+      const aiMessage = { role: 'assistant', content: data.reply };
       setMessages((prev) => [...prev, aiMessage]);
+
+      if (data.parameter_update || data.ranking_snapshot) {
+        onUpdateState(data.parameter_update, data.ranking_snapshot);
+      }
 
     } catch (error) {
       console.error("Error communicating with LLM:", error);
       setMessages((prev) => [
         ...prev, 
-        { role: 'ai', content: "Sorry, I'm having trouble connecting to the server right now." }
+        { role: 'assistant', content: "Sorry, I'm having trouble connecting to the backend server. Make sure FastAPI is running and CORS is configured." }
       ]);
     } finally {
       setIsLoading(false);
@@ -61,7 +73,7 @@ const Chat = () => {
   return (
     <div className="chat-container" style={styles.container}>
       <div className="chat-header" style={styles.header}>
-        <h2>LLM Assistant</h2>
+        <h2 style={{ margin: 0, fontSize: '18px', color: '#333' }}>AI Copilot</h2>
       </div>
 
       <div className="chat-messages" style={styles.messagesContainer}>
@@ -98,7 +110,7 @@ const Chat = () => {
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Type your message..."
+          placeholder="Ask about a crisis or adjust weights..."
           style={styles.input}
           disabled={isLoading}
         />
@@ -110,18 +122,17 @@ const Chat = () => {
   );
 };
 
-// Basic inline styles to get you started quickly
 const styles = {
   container: {
     display: 'flex',
     flexDirection: 'column',
-    height: '100vh',
-    maxWidth: '500px',
-    margin: '0 auto',
+    height: '100%', 
+    width: '100%',
     border: '1px solid #ccc',
     borderRadius: '8px',
     overflow: 'hidden',
-    fontFamily: 'sans-serif'
+    fontFamily: 'sans-serif',
+    backgroundColor: '#fff'
   },
   header: {
     backgroundColor: '#f8f9fa',
@@ -144,11 +155,13 @@ const styles = {
     width: '100%'
   },
   bubble: {
-    maxWidth: '75%',
+    maxWidth: '85%',
     padding: '10px 15px',
     borderRadius: '18px',
     lineHeight: '1.4',
-    wordWrap: 'break-word'
+    wordWrap: 'break-word',
+    fontSize: '14px',
+    whiteSpace: 'pre-wrap'
   },
   inputArea: {
     display: 'flex',
@@ -163,7 +176,7 @@ const styles = {
     border: '1px solid #ccc',
     outline: 'none',
     marginRight: '10px',
-    fontSize: '16px'
+    fontSize: '14px'
   },
   button: {
     padding: '10px 20px',
@@ -172,7 +185,7 @@ const styles = {
     border: 'none',
     borderRadius: '20px',
     cursor: 'pointer',
-    fontSize: '16px',
+    fontSize: '14px',
     fontWeight: 'bold'
   }
 };
