@@ -1,184 +1,137 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo } from 'react';
 
-const Weights = ({ currentParams = {}, onWeightsChange }) => {
-  // Use currentParams if passed from App.js, otherwise fallback to defaults from Python
-  const [weights, setWeights] = useState({
-    severity_weight: currentParams.severity_weight ?? 0.6,
-    funding_gap_weight: currentParams.funding_gap_weight ?? 0.4,
-    need_weight: currentParams.need_weight ?? 0.5,
-    ipc_weight: currentParams.ipc_weight ?? 0.4,
-    events_weight: currentParams.events_weight ?? 0.1,
-  });
+// --- HELPER: Fuzzy matching for key detection ---
+const fuzzyKeyMatch = (text, target) => {
+  const t = target.toLowerCase();
+  const str = text.toLowerCase();
+  // Check if target is inside text or vice-versa
+  return str.includes(t) || t.includes(str) || (str.includes('food') && t === 'ipc_weight');
+};
 
-  // Handle local slider changes
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    const newWeights = { ...weights, [name]: parseFloat(value) };
-    setWeights(newWeights);
-    
-    // Optional: Trigger parent update to fetch new rankings from FastAPI
-    if (onWeightsChange) {
-      onWeightsChange(newWeights);
-    }
-  };
+const Weights = ({ messages = [] }) => {
+  
+  // Logic: Scan messages from latest to oldest to find a weight table
+  const detectedWeights = useMemo(() => {
+    // Default fallback
+    const weights = {
+      severity_weight: 0.6,
+      funding_gap_weight: 0.4,
+      need_weight: 0.5,
+      ipc_weight: 0.4,
+      events_weight: 0.1,
+    };
 
-  // 1. Auto-normalize top-level weights
-  const topTotal = weights.severity_weight + weights.funding_gap_weight || 1;
-  const normSeverity = (weights.severity_weight / topTotal).toFixed(2);
-  const normFunding = (weights.funding_gap_weight / topTotal).toFixed(2);
+    // 1. Filter for assistant messages that contain tables (using the pipe symbol)
+    const tableMessages = messages
+      .filter(m => m.role === 'assistant' && m.content.includes('|'))
+      .reverse(); // Start from newest
 
-  // 2. Auto-normalize sub-weights (Assuming Case A: All data available for illustration)
-  const subTotal = weights.need_weight + weights.ipc_weight + weights.events_weight || 1;
-  const normNeed = (weights.need_weight / subTotal).toFixed(2);
-  const normIpc = (weights.ipc_weight / subTotal).toFixed(2);
-  const normEvents = (weights.events_weight / subTotal).toFixed(2);
+    if (tableMessages.length === 0) return { data: weights, source: 'System Default' };
+
+    const latestContent = tableMessages[0].content;
+    const lines = latestContent.split('\n');
+
+    lines.forEach(line => {
+      if (!line.includes('|')) return;
+      const cells = line.split('|').map(c => c.trim().toLowerCase());
+      
+      // Look for a number in the row
+      const value = parseFloat(cells.find(c => !isNaN(parseFloat(c)) && isFinite(c)));
+      if (isNaN(value)) return;
+
+      // Fuzzy map the row text to our keys
+      if (cells.some(c => fuzzyKeyMatch(c, 'severity'))) weights.severity_weight = value;
+      if (cells.some(c => fuzzyKeyMatch(c, 'funding'))) weights.funding_gap_weight = value;
+      if (cells.some(c => fuzzyKeyMatch(c, 'need'))) weights.need_weight = value;
+      if (cells.some(c => fuzzyKeyMatch(c, 'ipc') || fuzzyKeyMatch(c, 'food'))) weights.ipc_weight = value;
+      if (cells.some(c => fuzzyKeyMatch(c, 'conflict') || fuzzyKeyMatch(c, 'event'))) weights.events_weight = value;
+    });
+
+    return { data: weights, source: 'Extracted from Chat' };
+  }, [messages]);
+
+  const { data, source } = detectedWeights;
+
+  // Normalization logic for display
+  const topTotal = data.severity_weight + data.funding_gap_weight || 1;
+  const subTotal = data.need_weight + data.ipc_weight + data.events_weight || 1;
 
   return (
     <div style={styles.container}>
-      <h2 style={styles.header}>Scoring Methodology & Weights</h2>
+      <div style={styles.headerRow}>
+        <h2 style={styles.header}>Active Methodology</h2>
+        <span style={{
+          ...styles.statusBadge, 
+          backgroundColor: source === 'System Default' ? '#eee' : '#e1f5fe',
+          color: source === 'System Default' ? '#666' : '#0288d1'
+        }}>
+          {source}
+        </span>
+      </div>
+
       <p style={styles.description}>
-        The <strong>Neglect Index (0-1)</strong> identifies crises that are simultaneously severe and underfunded. 
-        Adjust the weights below to change how the algorithm prioritizes crises.
+        The index is currently reading weights from the conversation history. 
+        To change these, tell the AI: <em>"Update the severity weight to 0.8"</em>.
       </p>
 
-      {/* TOP LEVEL WEIGHTS */}
+      {/* READ-ONLY DISPLAY */}
       <div style={styles.section}>
-        <h3 style={styles.sectionTitle}>1. Top-Level Balance</h3>
-        <p style={styles.mathText}>
-          <code>Neglect = ({normSeverity} × Severity) + ({normFunding} × Funding Gap)</code>
-        </p>
-        
-        <WeightSlider 
-          label="Severity Weight" 
-          name="severity_weight" 
-          value={weights.severity_weight} 
-          onChange={handleChange} 
-        />
-        <WeightSlider 
-          label="Funding Gap Weight" 
-          name="funding_gap_weight" 
-          value={weights.funding_gap_weight} 
-          onChange={handleChange} 
-        />
+        <div style={styles.sectionTitle}>Macro Weights</div>
+        <StatBar label="Severity" value={data.severity_weight} total={topTotal} color="#0366d6" />
+        <StatBar label="Funding Gap" value={data.funding_gap_weight} total={topTotal} color="#f66a0a" />
       </div>
 
-      {/* SEVERITY SUB-WEIGHTS */}
       <div style={styles.section}>
-        <h3 style={styles.sectionTitle}>2. Severity Composition</h3>
-        <p style={styles.mathText}>
-          When all data is available, the algorithm auto-normalizes the sub-weights: <br/>
-          <code>Severity = ({normNeed} × Need Rank) + ({normIpc} × IPC) + ({normEvents} × Conflict)</code>
-        </p>
-
-        <WeightSlider 
-          label="People In Need Weight" 
-          name="need_weight" 
-          value={weights.need_weight} 
-          onChange={handleChange} 
-        />
-        <WeightSlider 
-          label="Food Insecurity (IPC) Weight" 
-          name="ipc_weight" 
-          value={weights.ipc_weight} 
-          onChange={handleChange} 
-        />
-        <WeightSlider 
-          label="Conflict Events Weight" 
-          name="events_weight" 
-          value={weights.events_weight} 
-          onChange={handleChange} 
-        />
-      </div>
-
-      <div style={styles.infoBox}>
-        <strong>Note on Missing Data:</strong> If a sector lacks IPC or Conflict data, the algorithm 
-        automatically drops those variables and scales the remaining weights up to 100% to ensure fair comparison.
+        <div style={styles.sectionTitle}>Severity Composition</div>
+        <StatBar label="People In Need" value={data.need_weight} total={subTotal} color="#28a745" />
+        <StatBar label="Food Security (IPC)" value={data.ipc_weight} total={subTotal} color="#6f42c1" />
+        <StatBar label="Conflict Events" value={data.events_weight} total={subTotal} color="#d73a49" />
       </div>
     </div>
   );
 };
 
-// Reusable Slider Component
-const WeightSlider = ({ label, name, value, onChange }) => (
-  <div style={styles.sliderRow}>
-    <div style={styles.sliderLabel}>
-      <span>{label}</span>
-      <strong>{value.toFixed(2)}</strong>
+// Purely visual component since user cannot edit
+const StatBar = ({ label, value, total, color }) => {
+  const percentage = ((value / total) * 100).toFixed(0);
+  return (
+    <div style={styles.statRow}>
+      <div style={styles.statLabel}>
+        <span>{label}</span>
+        <strong>{percentage}%</strong>
+      </div>
+      <div style={styles.barBg}>
+        <div style={{
+          ...styles.barFill,
+          width: `${percentage}%`,
+          backgroundColor: color
+        }} />
+      </div>
+      <div style={styles.rawVal}>Relative score: {value.toFixed(2)}</div>
     </div>
-    <input 
-      type="range" 
-      name={name}
-      min="0" 
-      max="1" 
-      step="0.05" 
-      value={value} 
-      onChange={onChange}
-      style={styles.slider}
-    />
-  </div>
-);
+  );
+};
 
 const styles = {
   container: {
     padding: '20px',
-    backgroundColor: '#ffffff',
-    borderRadius: '8px',
+    backgroundColor: '#fff',
+    borderRadius: '12px',
     border: '1px solid #e1e4e8',
     fontFamily: 'sans-serif',
-    maxWidth: '600px'
+    maxWidth: '400px'
   },
-  header: {
-    margin: '0 0 10px 0',
-    fontSize: '20px',
-    color: '#24292e'
-  },
-  description: {
-    fontSize: '14px',
-    color: '#586069',
-    lineHeight: '1.5',
-    marginBottom: '20px'
-  },
-  section: {
-    backgroundColor: '#f6f8fa',
-    padding: '15px',
-    borderRadius: '6px',
-    marginBottom: '15px'
-  },
-  sectionTitle: {
-    margin: '0 0 10px 0',
-    fontSize: '16px',
-    color: '#24292e'
-  },
-  mathText: {
-    fontSize: '13px',
-    color: '#0366d6',
-    backgroundColor: '#e1ecf8',
-    padding: '8px',
-    borderRadius: '4px',
-    marginBottom: '15px'
-  },
-  sliderRow: {
-    marginBottom: '15px'
-  },
-  sliderLabel: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    fontSize: '14px',
-    marginBottom: '5px',
-    color: '#444'
-  },
-  slider: {
-    width: '100%',
-    cursor: 'pointer'
-  },
-  infoBox: {
-    fontSize: '13px',
-    color: '#856404',
-    backgroundColor: '#fff3cd',
-    padding: '10px',
-    borderRadius: '6px',
-    border: '1px solid #ffeeba'
-  }
+  headerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
+  header: { margin: 0, fontSize: '18px', color: '#24292e' },
+  statusBadge: { fontSize: '10px', padding: '3px 8px', borderRadius: '10px', fontWeight: 'bold', textTransform: 'uppercase' },
+  description: { fontSize: '12px', color: '#586069', marginBottom: '20px', fontStyle: 'italic' },
+  section: { marginBottom: '20px' },
+  sectionTitle: { fontSize: '12px', fontWeight: 'bold', color: '#888', textTransform: 'uppercase', marginBottom: '10px', letterSpacing: '0.5px' },
+  statRow: { marginBottom: '12px' },
+  statLabel: { display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' },
+  barBg: { height: '6px', backgroundColor: '#f0f0f0', borderRadius: '3px', overflow: 'hidden' },
+  barFill: { height: '100%', transition: 'width 0.5s ease-out' },
+  rawVal: { fontSize: '10px', color: '#aaa', marginTop: '2px', textAlign: 'right' }
 };
 
 export default Weights;

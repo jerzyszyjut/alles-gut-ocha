@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import Chat from './Chat';
 import CsvViewer from './CsvViewer';
 import WorldMap from "./WorldMap";
+import Weights from "./Weights";
 
 function App() {
   const [csvData, setCsvData] = useState([]);
@@ -75,6 +76,7 @@ function App() {
 
       {/* RIGHT: Chat Sidebar */}
       <div style={styles.sidebar}>
+        <Weights />
         <Chat 
           currentParams={currentParams} 
           onUpdateState={handleStateUpdateFromChat} 
@@ -85,11 +87,56 @@ function App() {
 }
 
 const styles = {
-  appContainer: { display: 'flex', flexDirection: 'row', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: '#f0f2f5' },
-  mainContent: { display: 'flex', flexDirection: 'column', flex: 1, height: '100%' },
-  mapSection: { flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', margin: '10px', borderRadius: '12px', backgroundColor: '#fff', border: '1px solid #e1e4e8', overflow: 'hidden' },
-  csvSection: { height: '40%', padding: '0 10px 10px 10px', overflow: 'hidden' },
-  sidebar: { width: '400px', height: '100vh', padding: '10px', display: 'flex' }
+  appContainer: { 
+    display: 'flex', 
+    flexDirection: 'row', 
+    height: '100vh', 
+    width: '100vw', 
+    overflow: 'hidden', 
+    backgroundColor: '#f0f2f5' 
+  },
+  mainContent: { 
+    display: 'flex', 
+    flexDirection: 'column', 
+    flex: 1, 
+    height: '100%' 
+  },
+  mapSection: { 
+    flex: 1, 
+    display: 'flex', 
+    flexDirection: 'column', 
+    position: 'relative', 
+    margin: '10px', 
+    borderRadius: '12px', 
+    backgroundColor: '#fff', 
+    border: '1px solid #e1e4e8', 
+    overflow: 'hidden' 
+  },
+  csvSection: { 
+    height: '40%', 
+    padding: '0 10px 10px 10px', 
+    overflow: 'hidden' 
+  },
+  
+  // --- UPDATED SIDEBAR & CHILDREN ---
+  sidebar: { 
+    width: '400px', 
+    height: '100vh', 
+    padding: '10px',
+    display: 'flex',           // Turn sidebar into flexbox
+    flexDirection: 'column',    // Stack Weights and Chat vertically
+    gap: '10px',                // Adds space between the two components
+    boxSizing: 'border-box'     // Ensures padding doesn't break the 100vh
+  },
+  weightsWrapper: {
+    flexShrink: 0,              // Prevents Weights from squishing
+  },
+  chatWrapper: {
+    flex: 1,                    // Forces Chat to take up all remaining space
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden'          // Important so the Chat's internal scroll works
+  }
 };
 
 export default App;
