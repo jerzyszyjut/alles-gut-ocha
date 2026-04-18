@@ -2,7 +2,8 @@ import React, { useState } from "react";
 import { ComposableMap, Geographies, Geography } from "react-simple-maps";
 import { Tooltip } from "react-tooltip";
 
-const geoUrl = "https://unpkg.com/world-atlas@2.0.2/countries-110m.json";
+//const geoUrl = "https://unpkg.com/world-atlas@2.0.2/countries-110m.json";
+const geoUrl = "https://raw.githubusercontent.com/subyfly/topojson/master/world-countries.json";
 
 const MapChart = ({ setHoveredCountry }) => {
   const [content, setContent] = useState("");
@@ -37,9 +38,12 @@ const MapChart = ({ setHoveredCountry }) => {
                 key={geo.rsmKey}
                 geography={geo}
                 onMouseEnter={() => {
-                  const countryName = geo.properties.name;
-                  setContent(countryName);          // Updates the local Tooltip
-                  setHoveredCountry(countryName);    // Updates the Input in App.js
+                  // geo.id is usually the 3-letter code in many datasets
+                  // If your dataset has it inside properties, use geo.properties.ISO_A3
+                  const iso3 = geo.id || geo.properties.ISO_A3 || geo.properties.iso_a3;
+                  
+                  setContent(geo.properties.name); // Keeps tooltip as "Afghanistan"
+                  setHoveredCountry(iso3);        // Sends "AFG" to the CSV filter
                 }}
                 onMouseLeave={() => {
                   setContent("");                   // Hides Tooltip
