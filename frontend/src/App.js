@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import Chat from './Chat';
 import CsvViewer from './CsvViewer';
 import { DUMMY_NEGLECT_DATA } from './dummy';
@@ -7,11 +7,19 @@ import WorldMap from "./WorldMap";
 function App() {
   const [filterText, setFilterText] = useState("");
 
+  const availableISOs = useMemo(() => {
+    // Replace 'ISO3' with the exact key name in your DUMMY_NEGLECT_DATA
+    return new Set(DUMMY_NEGLECT_DATA.map(row => row.countryCode)); 
+  }, []);
+
   return (
     <div style={styles.appContainer}>
       {/* LEFT SIDE: Map (Top) and CSV (Bottom) */}
       <div style={styles.mainContent}>
-        <WorldMap setHoveredCountry={setFilterText} />
+        <WorldMap
+          setHoveredCountry={setFilterText}
+          availableCountries={availableISOs}
+        />
 
         {/* CSV Viewer at the bottom */}
         <div style={styles.csvSection}>
