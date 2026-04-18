@@ -120,70 +120,101 @@ def create_aggregate_base():
 
     return final_analysis
 
+def _pct_rank_within_groups(values, group_codes):
+    """Percentile rank of values within each integer-coded group. NaN input → NaN output."""
+    out = np.full(len(values), np.nan)
+    for g in np.unique(group_codes):
+        mask = group_codes == g
+        v = values[mask]
+        finite = np.isfinite(v)
+        if finite.sum() == 0:
+            continue
+        idx = np.where(mask)[0]
+        # average-rank for ties, NaN rows stay NaN
+        order = np.argsort(v[finite], kind='stable')
+        sv = v[finite][order]
+        ranks = np.empty(finite.sum())
+        i = 0
+        while i < len(sv):
+            j = i + 1
+            while j < len(sv) and sv[j] == sv[i]:
+                j += 1
+            ranks[order[i:j]] = (i + j + 1) / 2.0
+            i = j
+        pct = ranks / finite.sum()
+        out[idx[finite]] = pct
+    return out
+
+
 def _neglect_score_on_sample(sample):
     """Compute neglect_index for a (possibly bootstrapped) dataframe. Returns a Series aligned to sample.index.
     All ranks are within-cluster so each sector is compared only to peer countries in the same sector."""
-    tmp = pd.DataFrame(index=sample.index)
-    tmp['cluster'] = sample['cluster'].values
-    tmp['coverage'] = (
-        sample['funding_cluster_specific'] / sample['requirements_cluster_specific']
-    ).fillna(0).clip(upper=1.0).values
-    tmp['People_In_Need'] = sample['People_In_Need'].values
+    orig_index = sample.index
+    n = len(sample)
 
-    # Rank within cluster: Food Security vs Food Security, Health vs Health, etc.
-    need_rank     = tmp.groupby('cluster')['People_In_Need'].transform(lambda x: x.rank(pct=True))
-    coverage_rank = tmp.groupby('cluster')['coverage'].transform(lambda x: x.rank(pct=True))
+    coverage = (
+        sample['funding_cluster_specific'].to_numpy(dtype=float)
+        / np.where(sample['requirements_cluster_specific'].to_numpy(dtype=float) == 0,
+                   np.nan,
+                   sample['requirements_cluster_specific'].to_numpy(dtype=float))
+    )
+    coverage = np.nan_to_num(coverage, nan=0.0).clip(0, 1)
+
+    cluster_codes = pd.Categorical(sample['cluster'].to_numpy()).codes
+
+    need_rank     = _pct_rank_within_groups(sample['People_In_Need'].to_numpy(dtype=float), cluster_codes)
+    coverage_rank = _pct_rank_within_groups(coverage, cluster_codes)
 
     ipc_phase_cols = [f'ipc_phase_{i}_people' for i in range(1, 6)]
     if all(c in sample.columns for c in ipc_phase_cols):
-        total_ipc = sum(sample[c].fillna(0) for c in ipc_phase_cols)
-        weighted_phase = sum(i * sample[f'ipc_phase_{i}_people'].fillna(0) for i in range(1, 6))
-        ipc_severity_norm = ((weighted_phase / total_ipc.replace(0, float('nan'))) - 1) / 4
-        ipc_severity_norm = ipc_severity_norm.clip(0, 1)
-        has_ipc = ipc_severity_norm.notna()
+        total_ipc = sum(sample[c].fillna(0).to_numpy(dtype=float) for c in ipc_phase_cols)
+        weighted_phase = sum(i * sample[f'ipc_phase_{i}_people'].fillna(0).to_numpy(dtype=float) for i in range(1, 6))
+        with np.errstate(invalid='ignore', divide='ignore'):
+            ipc_severity_norm = np.where(total_ipc > 0, (weighted_phase / total_ipc - 1) / 4, np.nan)
+        ipc_severity_norm = np.clip(ipc_severity_norm, 0, 1)
+        has_ipc = np.isfinite(ipc_severity_norm)
     else:
-        ipc_severity_norm = pd.Series(float('nan'), index=sample.index)
-        has_ipc = pd.Series(False, index=sample.index)
+        ipc_severity_norm = np.full(n, np.nan)
+        has_ipc = np.zeros(n, dtype=bool)
 
     if 'civilian_events' in sample.columns:
-        tmp['civilian_events'] = sample['civilian_events'].values
-        tmp['year'] = sample['year'].values
-        # Rank within cluster+year: compares countries on civilian incidents within the same sector-year
-        events_rank = tmp.groupby(['cluster', 'year'])['civilian_events'].transform(
-            lambda x: x.rank(pct=True, na_option='keep')
-        )
+        year_codes = pd.Categorical(sample['year'].to_numpy()).codes
+        combined_codes = cluster_codes * (year_codes.max() + 1) + year_codes
+        events_rank = _pct_rank_within_groups(sample['civilian_events'].to_numpy(dtype=float), combined_codes)
     else:
-        events_rank = pd.Series(float('nan'), index=sample.index)
-    has_events = events_rank.notna()
+        events_rank = np.full(n, np.nan)
+    has_events = np.isfinite(events_rank)
 
     severity = need_rank.copy()
     has_both     = has_ipc & has_events
     has_ipc_only = has_ipc & ~has_events
     has_ev_only  = ~has_ipc & has_events
 
-    severity[has_both]     = 0.4 * need_rank[has_both]     + 0.3 * ipc_severity_norm[has_both]     + 0.3 * events_rank[has_both]
+    severity[has_both]     = 0.5 * need_rank[has_both]     + 0.4 * ipc_severity_norm[has_both]     + 0.1 * events_rank[has_both]
     severity[has_ipc_only] = 0.5 * need_rank[has_ipc_only] + 0.5 * ipc_severity_norm[has_ipc_only]
-    severity[has_ev_only]  = 0.6 * need_rank[has_ev_only]  + 0.4 * events_rank[has_ev_only]
+    severity[has_ev_only]  = 0.9 * need_rank[has_ev_only]  + 0.1 * events_rank[has_ev_only]
 
-    return severity * 0.6 + (1 - coverage_rank) * 0.4
+    return pd.Series(severity * 0.6 + (1 - coverage_rank) * 0.4, index=orig_index)
 
 
-def _bagging_uncertainty(df, n_bootstrap=300, seed=42):
+def _bagging_uncertainty(df, n_bootstrap=200, seed=42):
     """Bootstrap the rank-based neglect score; return per-row std across resamples."""
     rng = np.random.default_rng(seed)
     n = len(df)
-    row_scores = [[] for _ in range(n)]
+    # accumulate scores as a matrix: rows=bootstrap iterations, cols=original rows
+    accumulator = np.full((n_bootstrap, n), np.nan)
 
-    for _ in range(n_bootstrap):
+    for b in range(n_bootstrap):
         boot_pos = rng.integers(0, n, size=n)
         scores = _neglect_score_on_sample(df.iloc[boot_pos]).to_numpy()
-        for orig_i, s in zip(boot_pos, scores):
-            row_scores[orig_i].append(s)
+        # record one score per original row (first occurrence is fine)
+        seen = np.zeros(n, dtype=bool)
+        for pos, orig_i in enumerate(boot_pos):
+            if not seen[orig_i]:
+                accumulator[b, orig_i] = scores[pos]
+                seen[orig_i] = True
 
-    return pd.Series(
-        [np.std(s) if len(s) > 1 else 0.0 for s in row_scores],
-        index=df.index,
-    )
+    return pd.Series(np.nanstd(accumulator, axis=0), index=df.index)
 
 
 def compute_indices(final_analysis):
@@ -397,22 +428,12 @@ def plot_neglect_ranking(df, top_n=25):
         zorder=3, edgecolors='white', linewidths=0.6,
     )
 
-    # civilian events annotation
-    for i, (_, row) in enumerate(plot_df.iterrows()):
-        if pd.notna(row['civilian_events']):
-            ax_main.annotate(
-                f"{int(row['civilian_events']):,}",
-                xy=(row['neglect_index'], i),
-                xytext=(5, 0), textcoords='offset points',
-                fontsize=7, color='#555555', va='center',
-            )
-
     ax_main.set_yticks(ys)
     ax_main.set_yticklabels(plot_df['country_label'], fontsize=9)
     ax_main.set_xlabel('Neglect Index  (higher = more overlooked)', fontsize=11)
     ax_main.set_title(
         f'Top {top_n} Most Overlooked Country–Cluster Pairs\n'
-        'dot size ~ people in need  |  annotation = civilian incidents',
+        'dot size ~ people in need',
         fontsize=13, pad=12,
     )
     ax_main.set_xlim(0.4, 1.05)
@@ -429,12 +450,12 @@ def plot_neglect_ranking(df, top_n=25):
     # ── Right: severity vs funding-gap scatter for top entries ───────────────
     funding_gap = (1 - plot_df['coverage']).clip(0, 1)
     need_score  = plot_df['need_rank']
-    ev_norm     = Normalize(vmin=0, vmax=plot_df['civilian_events'].max())
-    ev_colors   = plt.cm.YlOrRd(ev_norm(plot_df['civilian_events'].fillna(0)))
+    neglect_norm = Normalize(vmin=plot_df['neglect_index'].min(), vmax=plot_df['neglect_index'].max())
+    dot_colors_scatter = plt.cm.Reds(neglect_norm(plot_df['neglect_index']))
 
     ax_scatter.scatter(
         funding_gap, need_score,
-        c=ev_colors, s=70, edgecolors='white', linewidths=0.5, zorder=3,
+        c=dot_colors_scatter, s=70, edgecolors='white', linewidths=0.5, zorder=3,
     )
     for _, row in plot_df.iterrows():
         ax_scatter.annotate(
@@ -445,16 +466,16 @@ def plot_neglect_ranking(df, top_n=25):
         )
 
     ax_scatter.set_xlabel('Funding Gap  (1 − coverage)', fontsize=10)
-    ax_scatter.set_ylabel('Severity Score  (need + IPC + incidents)', fontsize=10)
-    ax_scatter.set_title('Gap vs Severity\n(colour = civilian incidents)', fontsize=11, pad=10)
+    ax_scatter.set_ylabel('Severity Score  (need + IPC)', fontsize=10)
+    ax_scatter.set_title('Gap vs Severity\n(colour = neglect index)', fontsize=11, pad=10)
     ax_scatter.set_xlim(-0.05, 1.1)
     ax_scatter.set_ylim(-0.05, 1.1)
     ax_scatter.plot([0, 1], [0, 1], color='grey', linestyle=':', linewidth=1, alpha=0.5)
 
-    sm = ScalarMappable(cmap='YlOrRd', norm=ev_norm)
+    sm = ScalarMappable(cmap='Reds', norm=neglect_norm)
     sm.set_array([])
     cb = fig.colorbar(sm, ax=ax_scatter, fraction=0.046, pad=0.04)
-    cb.set_label('Civilian incidents', fontsize=9)
+    cb.set_label('Neglect index', fontsize=9)
 
     plt.tight_layout()
     plt.savefig('crisis_neglect_ranking.png', dpi=150, bbox_inches='tight')
