@@ -59,10 +59,14 @@ class CrisisRow(BaseModel):
     funding_usd: Optional[float]
     coverage: float
     neglect_index: float
+    rank: Optional[int]
+    rank_ci_low: Optional[int]
+    rank_ci_high: Optional[int]
     need_rank: float
     coverage_rank: float
     ipc_severity_score: Optional[float]
     uncertainty: Optional[float]
+    severity_case: Optional[str]  # 'A' | 'B' | 'C' | 'D'
     priority_label: str  # "critical" | "high" | "medium" | "low"
 
     model_config = {"from_attributes": True}
@@ -104,6 +108,12 @@ def _row_to_model(row: pd.Series, critical: float, high: float) -> CrisisRow:
     def _opt(v):
         return None if pd.isna(v) else float(v)
 
+    def _opt_int(v):
+        try:
+            return None if pd.isna(v) else int(v)
+        except (TypeError, ValueError):
+            return None
+
     return CrisisRow(
         countryCode=row['countryCode'],
         countryName=iso3_to_name(row['countryCode']),
@@ -113,10 +123,14 @@ def _row_to_model(row: pd.Series, critical: float, high: float) -> CrisisRow:
         funding_usd=_opt(row.get('funding_cluster_specific')),
         coverage=float(row['coverage']),
         neglect_index=float(row['neglect_index']),
+        rank=_opt_int(row.get('rank')),
+        rank_ci_low=_opt_int(row.get('rank_ci_low')),
+        rank_ci_high=_opt_int(row.get('rank_ci_high')),
         need_rank=float(row['need_rank']),
         coverage_rank=float(row['coverage_rank']),
         ipc_severity_score=_opt(row.get('ipc_severity_score')),
         uncertainty=_opt(row.get('uncertainty')),
+        severity_case=row.get('severity_case'),
         priority_label=_priority_label(row['neglect_index'], critical, high),
     )
 
@@ -245,6 +259,10 @@ def get_ranking(
     ascending = not sort_desc
     if sort_by in df.columns:
         df = df.sort_values(sort_by, ascending=ascending, na_position='last')
+    df = df.reset_index(drop=True)
+
+    # Assign rank by neglect_index (rank 1 = most neglected) across full result set
+    df['rank'] = df['neglect_index'].rank(ascending=False, method='min').astype(int)
 
     # Paginate
     page = df.iloc[offset:] if limit is None else df.iloc[offset: offset + limit]

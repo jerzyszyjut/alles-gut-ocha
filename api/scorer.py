@@ -234,7 +234,14 @@ def _neglect_score_on_sample(
             for i in range(1, 6)
         )
         with np.errstate(invalid='ignore', divide='ignore'):
-            ipc_sev = np.where(total_ipc > 0, (weighted_phase / total_ipc - 1) / 4, np.nan)
+            avg_phase = np.where(total_ipc > 0, weighted_phase / total_ipc, np.nan)
+            # Exponential doubling per IPC phase: each level ~2x more severe than previous.
+            # (2^(phase-1) - 1) / 15  maps [1,5] → [0,1] with jumps 0.07, 0.13, 0.27, 0.53
+            ipc_sev = np.where(
+                total_ipc > 0,
+                (np.power(2.0, avg_phase - 1.0) - 1.0) / 15.0,
+                np.nan,
+            )
         ipc_sev = np.clip(ipc_sev, 0, 1)
         has_ipc = np.isfinite(ipc_sev)
     else:
@@ -285,24 +292,52 @@ def _neglect_score_on_sample(
     return pd.Series(sw * severity + gw * (1 - coverage_rank), index=orig_index)
 
 
-def _bagging_uncertainty(
+def _bootstrap_stats(
     df: pd.DataFrame,
     n_bootstrap: int = 200,
     seed: int = 42,
     **score_kwargs,
-) -> pd.Series:
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Bootstrap uncertainty + 90% rank confidence intervals in one pass.
+
+    Returns (uncertainty_std, rank_ci_low, rank_ci_high).
+    Rows absent from a bootstrap draw use baseline scores for rank computation.
+    """
     rng = np.random.default_rng(seed)
     n = len(df)
-    accumulator = np.full((n_bootstrap, n), np.nan)
+    baseline = _neglect_score_on_sample(df, **score_kwargs).to_numpy()
+
+    score_acc = np.full((n_bootstrap, n), np.nan)
+    rank_acc  = np.full((n_bootstrap, n), np.nan)
+
     for b in range(n_bootstrap):
         boot_pos = rng.integers(0, n, size=n)
-        scores = _neglect_score_on_sample(df.iloc[boot_pos], **score_kwargs).to_numpy()
+        boot_s   = _neglect_score_on_sample(df.iloc[boot_pos], **score_kwargs).to_numpy()
+
+        iter_scores = baseline.copy()
         seen = np.zeros(n, dtype=bool)
         for pos, orig_i in enumerate(boot_pos):
             if not seen[orig_i]:
-                accumulator[b, orig_i] = scores[pos]
+                iter_scores[orig_i] = boot_s[pos]
+                score_acc[b, orig_i] = boot_s[pos]
                 seen[orig_i] = True
-    return pd.Series(np.nanstd(accumulator, axis=0), index=df.index)
+
+        # Rank all rows by this iteration (rank 1 = highest neglect)
+        valid = np.isfinite(iter_scores)
+        if valid.sum() < 2:
+            continue
+        vi    = np.where(valid)[0]
+        order = np.argsort(-iter_scores[valid], kind='stable')
+        temp  = np.full(n, np.nan)
+        for rpos, oi in enumerate(order):
+            temp[vi[oi]] = rpos + 1
+        rank_acc[b] = temp
+
+    idx          = df.index
+    uncertainty  = pd.Series(np.nanstd(score_acc, axis=0), index=idx).round(4)
+    rank_ci_low  = pd.Series(np.nanpercentile(rank_acc,  5, axis=0), index=idx).round(0)
+    rank_ci_high = pd.Series(np.nanpercentile(rank_acc, 95, axis=0), index=idx).round(0)
+    return uncertainty, rank_ci_low, rank_ci_high
 
 
 def compute_scores(
@@ -324,10 +359,19 @@ def compute_scores(
     if all(c in out.columns for c in ipc_phase_cols):
         total_ipc = sum(out[c].fillna(0) for c in ipc_phase_cols)
         weighted_phase = sum(i * out[f'ipc_phase_{i}_people'].fillna(0) for i in range(1, 6))
-        ipc_sev = ((weighted_phase / total_ipc.replace(0, float('nan'))) - 1) / 4
+        avg_phase = weighted_phase / total_ipc.replace(0, float('nan'))
+        ipc_sev = (np.power(2.0, avg_phase - 1.0) - 1.0) / 15.0
         out['ipc_severity_score'] = ipc_sev.clip(0, 1).round(3)
     else:
         out['ipc_severity_score'] = float('nan')
+
+    # Severity case: which sub-metrics are available for each row
+    _has_ipc = out['ipc_severity_score'].notna()
+    _has_ev  = out['civilian_events'].notna() if 'civilian_events' in out.columns else pd.Series(False, index=out.index)
+    out['severity_case'] = 'D'
+    out.loc[_has_ev & ~_has_ipc, 'severity_case'] = 'C'
+    out.loc[_has_ipc & ~_has_ev,  'severity_case'] = 'B'
+    out.loc[_has_ipc & _has_ev,   'severity_case'] = 'A'
 
     score_kwargs = dict(
         severity_weight=severity_weight,
@@ -341,8 +385,13 @@ def compute_scores(
     out['coverage_rank'] = out['coverage'].rank(pct=True).round(4)
 
     if n_bootstrap > 0:
-        out['uncertainty'] = _bagging_uncertainty(out, n_bootstrap=n_bootstrap, **score_kwargs).round(4)
+        unc, rci_lo, rci_hi = _bootstrap_stats(out, n_bootstrap=n_bootstrap, **score_kwargs)
+        out['uncertainty']  = unc
+        out['rank_ci_low']  = rci_lo.astype('Int64')
+        out['rank_ci_high'] = rci_hi.astype('Int64')
     else:
-        out['uncertainty'] = float('nan')
+        out['uncertainty']  = float('nan')
+        out['rank_ci_low']  = pd.NA
+        out['rank_ci_high'] = pd.NA
 
     return out
