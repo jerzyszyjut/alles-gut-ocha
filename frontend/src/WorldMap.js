@@ -4,8 +4,8 @@ import { Tooltip } from "react-tooltip";
 
 const geoUrl = "https://raw.githubusercontent.com/subyfly/topojson/master/world-countries.json";
 
-const MapChart = ({ setHoveredCountry, availableCountries }) => {
-  const [content, setContent] = useState("");
+const WorldMap = ({ setHoveredCountry, availableCountries, activeFilter }) => {
+  const [tooltipContent, setTooltipContent] = useState("");
 
   return (
     <div style={{ 
@@ -17,6 +17,7 @@ const MapChart = ({ setHoveredCountry, availableCountries }) => {
       justifyContent: "center",
       background: "#f0f2f5",
       borderRadius: "12px",
+      position: "relative"
     }}>
       <ComposableMap 
         width={800} 
@@ -33,37 +34,45 @@ const MapChart = ({ setHoveredCountry, availableCountries }) => {
         <Geographies geography={geoUrl}>
           {({ geographies }) =>
             geographies.map((geo) => {
-              // 1. Logic must happen inside curly braces
-              const iso3 = geo.id || geo.properties.ISO_A3 || geo.properties.iso_a3;
+              const iso3 = geo.id || geo.properties.ISO_A3;
               const hasData = availableCountries?.has(iso3);
+              const isSelected = activeFilter === iso3;
 
-              // 2. You must explicitly 'return' the JSX
               return (
                 <Geography
                   key={geo.rsmKey}
                   geography={geo}
+                  // HOVER: Only updates local tooltip, doesn't touch the input box
                   onMouseEnter={() => {
-                    setContent(geo.properties.name);
-                    setHoveredCountry(iso3);
+                    setTooltipContent(geo.properties.name);
                   }}
                   onMouseLeave={() => {
-                    setContent("");
-                    setHoveredCountry("");
+                    setTooltipContent("");
+                  }}
+                  // CLICK: This is now the ONLY thing that updates the input box
+                  onClick={() => {
+                    // Toggle logic: if clicking the already selected country, clear it.
+                    const newFilter = isSelected ? "" : iso3;
+                    setHoveredCountry(newFilter);
                   }}
                   style={{
                     default: { 
-                      // 3. Apply the highlight color based on hasData
-                      fill: hasData ? "#94a3b8" : "#D6D6DA", 
+                      // Colors: Selected (Blue) > Has Data (Gray) > No Data (Light Gray)
+                      fill: isSelected ? "#3b82f6" : (hasData ? "#94a3b8" : "#D6D6DA"), 
                       outline: "none",
-                      stroke: "#fff",
-                      strokeWidth: 0.5
+                      stroke: isSelected ? "#1e40af" : "#fff",
+                      strokeWidth: isSelected ? 1.5 : 0.5,
+                      transition: "fill 0.2s"
                     },
                     hover: { 
-                      fill: "#3b82f6", 
+                      fill: "#60a5fa", // Lighter blue on hover
                       outline: "none", 
-                      cursor: hasData ? "pointer" : "default" 
+                      cursor: "pointer" 
                     },
-                    pressed: { fill: "#2563eb", outline: "none" },
+                    pressed: { 
+                      fill: "#2563eb", 
+                      outline: "none" 
+                    },
                   }}
                 />
               );
@@ -74,7 +83,7 @@ const MapChart = ({ setHoveredCountry, availableCountries }) => {
       
       <Tooltip 
         anchorSelect=".rsm-geography" 
-        content={content}
+        content={tooltipContent}
         style={{ 
           backgroundColor: "#1e293b", 
           color: "#fff", 
@@ -86,4 +95,4 @@ const MapChart = ({ setHoveredCountry, availableCountries }) => {
   );
 };
 
-export default MapChart;
+export default WorldMap;
