@@ -115,7 +115,7 @@ const styles = {
   container: {
     display: 'flex',
     flexDirection: 'column',
-    height: '600px',
+    height: '100vh',
     maxWidth: '500px',
     margin: '0 auto',
     border: '1px solid #ccc',

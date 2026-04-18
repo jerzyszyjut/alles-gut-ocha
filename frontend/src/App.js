@@ -23,7 +23,6 @@ function App() {
         </div>
       </div>
 
-      {/* RIGHT SIDE: Chat pinned to the right */}
       <div style={styles.sidebar}>
         <Chat />
       </div>
@@ -66,8 +65,8 @@ const styles = {
     padding: '0 10px 10px 10px',
   },
   sidebar: {
-    width: '400px',     // Fixed width for the chat sidebar
-    height: '100%',
+    width: '400px',
+    height: '100vh',
     padding: '10px',
     display: 'flex',
   }
