@@ -2,6 +2,7 @@ import React from 'react';
 import Chat from './Chat';
 import CsvViewer from './CsvViewer';
 import { DUMMY_NEGLECT_DATA } from './dummy';
+import WorldMap from "./WorldMap";
 
 function App() {
   return (
@@ -12,8 +13,7 @@ function App() {
         {/* Placeholder for the Map component */}
         <div style={styles.mapPlaceholder}>
           <div style={styles.mapText}>
-            <p>🗺️ Map Component Placeholder</p>
-            <small>(Will be injected here to occupy remaining space)</small>
+            <WorldMap />
           </div>
         </div>
 
