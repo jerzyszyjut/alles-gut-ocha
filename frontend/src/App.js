@@ -17,6 +17,7 @@ function App() {
     { role: 'assistant', content: 'Hello! I am your humanitarian crisis analyst. I can explain the neglect index, adjust weights, or filter the data. How can I help?', isGreeting: true }
   ]);
   const [selectedCrisis, setSelectedCrisis] = useState(null);
+  const [counterfactualResult, setCounterfactualResult] = useState(null);
 
   useEffect(() => {
     const fetchInitialData = async () => {
@@ -119,7 +120,11 @@ function App() {
               activeFilter={filterText}
             />
           ) : (
-            <TsneChart currentParams={currentParams} />
+            <TsneChart
+                currentParams={currentParams}
+                selectedCrisis={selectedCrisis}
+                counterfactualResult={counterfactualResult}
+              />
           )}
         </div>
 
@@ -143,7 +148,8 @@ function App() {
           <CounterfactualSlider
             crisis={selectedCrisis}
             currentParams={currentParams}
-            onClose={() => setSelectedCrisis(null)}
+            onClose={() => { setSelectedCrisis(null); setCounterfactualResult(null); }}
+            onResult={setCounterfactualResult}
           />
         )}
         <Weights

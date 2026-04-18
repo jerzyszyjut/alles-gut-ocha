@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   ScatterChart, Scatter, XAxis, YAxis, ZAxis,
   Tooltip, Legend, ResponsiveContainer,
@@ -6,6 +6,36 @@ import {
 
 const KMEANS_COLORS = ['#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#dc2626'];
 
+const neglectColor = (score) => {
+  const r = Math.round(22  + (220 - 22)  * score);
+  const g = Math.round(163 + (38  - 163) * score);
+  const b = Math.round(74  + (38  - 74)  * score);
+  return `rgb(${r},${g},${b})`;
+};
+
+// KNN interpolation: estimate new t-SNE (x,y) from changed (neglect, coverage)
+const estimatePosition = (allData, target, newNeglect, newCoverage, k = 6) => {
+  const others = allData.filter(
+    d => !(d.countryCode === target.countryCode && d.cluster === target.cluster)
+  );
+  const scored = others.map(d => ({
+    ...d,
+    dist: Math.sqrt(
+      Math.pow((d.neglect_index - newNeglect) * 2, 2) +   // weight neglect 2×
+      Math.pow(d.coverage - newCoverage, 2)
+    ),
+  })).sort((a, b) => a.dist - b.dist).slice(0, k);
+
+  if (!scored.length) return { x: target.x, y: target.y };
+  const eps = 1e-6;
+  const totalW = scored.reduce((s, d) => s + 1 / (d.dist + eps), 0);
+  return {
+    x: scored.reduce((s, d) => s + d.x / (d.dist + eps), 0) / totalW,
+    y: scored.reduce((s, d) => s + d.y / (d.dist + eps), 0) / totalW,
+  };
+};
+
+// Normal dot
 const Dot = ({ cx, cy, payload, fill }) => {
   if (payload?.is_outlier) {
     return (
@@ -18,17 +48,70 @@ const Dot = ({ cx, cy, payload, fill }) => {
   return <circle cx={cx} cy={cy} r={4} fill={fill} fillOpacity={0.75} />;
 };
 
-const ChartTooltip = ({ active, payload }) => {
+// Selected dot (rendered in its own Scatter so position is controlled via data)
+const SelectedDot = ({ cx, cy, payload, fill }) => {
+  const hasCF = payload?.hasCF;
+  const cfColor = hasCF ? neglectColor(payload.new_neglect_index) : fill;
+  const delta = hasCF ? (payload.orig_neglect - payload.new_neglect_index) : 0;
+  return (
+    <g>
+      {/* Ghost at original position */}
+      {hasCF && (
+        <>
+          <circle cx={payload._origCx} cy={payload._origCy} r={5} fill={fill} fillOpacity={0.25} strokeDasharray="2 2" stroke={fill} strokeWidth={1} />
+          <line x1={payload._origCx} y1={payload._origCy} x2={cx} y2={cy} stroke="#1d4ed8" strokeWidth={1} strokeDasharray="3 2" strokeOpacity={0.5} />
+        </>
+      )}
+      {/* Glow */}
+      <circle cx={cx} cy={cy} r={18} fill="#1d4ed8" fillOpacity={0.1} />
+      {/* Ring */}
+      <circle cx={cx} cy={cy} r={12} fill="none" stroke="#1d4ed8" strokeWidth={1.5} strokeDasharray="3 2" />
+      {/* Dot coloured by new neglect */}
+      <circle cx={cx} cy={cy} r={6} fill={cfColor} fillOpacity={0.95} />
+      {/* Label */}
+      <text x={cx} y={cy - 17} textAnchor="middle" fontSize={9} fontWeight={700} fill="#1d4ed8">
+        {payload.countryName}
+      </text>
+      {hasCF && delta > 0.005 && (
+        <text x={cx} y={cy + 22} textAnchor="middle" fontSize={9} fontWeight={700} fill="#16a34a">
+          ▼ {delta.toFixed(3)}
+        </text>
+      )}
+    </g>
+  );
+};
+
+const ChartTooltip = ({ active, payload, selectedCrisis, counterfactualResult }) => {
   if (!active || !payload?.length) return null;
   const d = payload[0]?.payload;
   if (!d) return null;
+  const isSelected =
+    selectedCrisis &&
+    d.countryCode === selectedCrisis.countryCode &&
+    d.cluster === selectedCrisis.cluster;
+  const cf = isSelected ? counterfactualResult : null;
   return (
     <div style={tooltipStyle}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>{d.countryName}</div>
       <div style={{ color: '#586069', marginBottom: 6, fontSize: 12 }}>{d.cluster}</div>
-      <div>Coverage: <strong>{(d.coverage * 100).toFixed(1)}%</strong></div>
-      <div>Neglect Index: <strong>{d.neglect_index.toFixed(3)}</strong></div>
+      <div>Coverage: <strong>{(d.coverage * 100).toFixed(1)}%</strong>
+        {cf && cf.new_coverage !== cf.current_coverage && (
+          <span style={{ color: '#16a34a', marginLeft: 6 }}>→ {(cf.new_coverage * 100).toFixed(1)}%</span>
+        )}
+      </div>
+      <div>Neglect Index: <strong>{d.neglect_index.toFixed(3)}</strong>
+        {cf && (
+          <span style={{ color: cf.new_neglect_index < cf.current_neglect_index ? '#16a34a' : '#64748b', marginLeft: 6 }}>
+            → {cf.new_neglect_index.toFixed(3)}
+          </span>
+        )}
+      </div>
       <div>People in Need: <strong>{d.people_in_need.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></div>
+      {cf && (
+        <div style={{ color: '#1d4ed8', fontSize: 11, marginTop: 6, borderTop: '1px solid #e2e8f0', paddingTop: 5 }}>
+          Counterfactual: rank #{cf.current_rank} → #{cf.new_rank} of {cf.total_in_cluster}
+        </div>
+      )}
       {d.is_outlier && (
         <div style={{ color: '#dc2626', fontWeight: 600, marginTop: 6 }}>
           ⚠ Outlier from support cluster
@@ -38,7 +121,7 @@ const ChartTooltip = ({ active, payload }) => {
   );
 };
 
-const TsneChart = ({ currentParams }) => {
+const TsneChart = ({ currentParams, selectedCrisis, counterfactualResult }) => {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -72,12 +155,47 @@ const TsneChart = ({ currentParams }) => {
   const kmeansGroups = useMemo(() => {
     const map = {};
     data.forEach(d => {
+      // Exclude selected point — it gets its own Scatter so position can be controlled
+      if (
+        selectedCrisis &&
+        d.countryCode === selectedCrisis.countryCode &&
+        d.cluster === selectedCrisis.cluster
+      ) return;
       const key = d.kmeans_cluster;
       if (!map[key]) map[key] = [];
       map[key].push(d);
     });
     return map;
-  }, [data]);
+  }, [data, selectedCrisis]);
+
+  // Selected point with optionally estimated new position via KNN
+  const selectedPointData = useMemo(() => {
+    if (!selectedCrisis || !data.length) return null;
+    const orig = data.find(
+      d => d.countryCode === selectedCrisis.countryCode && d.cluster === selectedCrisis.cluster
+    );
+    if (!orig) return null;
+
+    if (counterfactualResult) {
+      const pos = estimatePosition(
+        data, orig,
+        counterfactualResult.new_neglect_index,
+        counterfactualResult.new_coverage,
+      );
+      return [{
+        ...orig,
+        x: pos.x,
+        y: pos.y,
+        hasCF: true,
+        orig_neglect: orig.neglect_index,
+        new_neglect_index: counterfactualResult.new_neglect_index,
+        // pixel coords of ghost are set dynamically via the chart scale — store data coords
+        _origX: orig.x,
+        _origY: orig.y,
+      }];
+    }
+    return [{ ...orig, hasCF: false }];
+  }, [data, selectedCrisis, counterfactualResult]);
 
   const clusterIds = useMemo(() => Object.keys(kmeansGroups).map(Number).sort((a, b) => a - b), [kmeansGroups]);
 
@@ -131,7 +249,7 @@ const TsneChart = ({ currentParams }) => {
               label={{ value: 't-SNE 2', angle: -90, position: 'insideLeft', offset: 10, fontSize: 11, fill: '#aaa' }}
             />
             <ZAxis range={[55, 55]} />
-            <Tooltip content={<ChartTooltip />} cursor={{ strokeDasharray: '3 3' }} />
+            <Tooltip content={<ChartTooltip selectedCrisis={selectedCrisis} counterfactualResult={counterfactualResult} />} cursor={{ strokeDasharray: '3 3' }} />
             <Legend
               wrapperStyle={{ fontSize: 11, paddingTop: 2 }}
               iconSize={8}
@@ -147,6 +265,30 @@ const TsneChart = ({ currentParams }) => {
                 shape={(props) => <Dot {...props} fill={KMEANS_COLORS[cid % KMEANS_COLORS.length]} />}
               />
             ))}
+            {selectedPointData && (
+              <Scatter
+                key="selected"
+                name={false}
+                legendType="none"
+                data={selectedPointData}
+                fill={KMEANS_COLORS[(selectedPointData[0]?.kmeans_cluster ?? 0) % KMEANS_COLORS.length]}
+                shape={(props) => {
+                  const fill = KMEANS_COLORS[(props.payload?.kmeans_cluster ?? 0) % KMEANS_COLORS.length];
+                  // Compute ghost pixel coords from the chart's xAxis/yAxis scales
+                  const xScale = props.xAxis?.scale;
+                  const yScale = props.yAxis?.scale;
+                  const origCx = xScale ? xScale(props.payload._origX) : props.cx;
+                  const origCy = yScale ? yScale(props.payload._origY) : props.cy;
+                  return (
+                    <SelectedDot
+                      {...props}
+                      fill={fill}
+                      payload={{ ...props.payload, _origCx: origCx, _origCy: origCy }}
+                    />
+                  );
+                }}
+              />
+            )}
           </ScatterChart>
         </ResponsiveContainer>
       </div>

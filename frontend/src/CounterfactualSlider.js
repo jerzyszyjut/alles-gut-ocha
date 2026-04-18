@@ -7,7 +7,7 @@ const fmt = (n) => {
   return `$${n.toFixed(0)}`;
 };
 
-const CounterfactualSlider = ({ crisis, currentParams, onClose }) => {
+const CounterfactualSlider = ({ crisis, currentParams, onClose, onResult }) => {
   const [additional, setAdditional] = useState(0);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -29,7 +29,11 @@ const CounterfactualSlider = ({ crisis, currentParams, onClose }) => {
         events_weight: currentParams?.events_weight ?? 0.1,
       });
       const res = await fetch(`http://localhost:8000/counterfactual?${p}`);
-      if (res.ok) setResult(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setResult(data);
+        onResult?.(data);
+      }
     } catch (_) {
       // ignore network errors during drag
     } finally {
