@@ -1,20 +1,13 @@
 import React, { useMemo } from 'react';
 import Chat from './Chat';
 
-// --- HELPER: Fuzzy matching for key detection ---
-const fuzzyKeyMatch = (text, target) => {
-  const t = target.toLowerCase();
-  const str = text.toLowerCase();
-  // Check if target is inside text or vice-versa
-  return str.includes(t) || t.includes(str) || (str.includes('food') && t === 'ipc_weight');
-};
+
+const WEIGHT_KEYS = ['severity_weight', 'funding_gap_weight', 'need_weight', 'ipc_weight', 'events_weight'];
 
 const Weights = ({ messages = [], setMessages, currentParams, onUpdateState }) => {
-  
-  // Logic: Scan messages from latest to oldest to find a weight table
+
   const detectedWeights = useMemo(() => {
-    // Default fallback
-    const weights = {
+    const defaults = {
       severity_weight: 0.6,
       funding_gap_weight: 0.4,
       need_weight: 0.5,
@@ -22,34 +15,16 @@ const Weights = ({ messages = [], setMessages, currentParams, onUpdateState }) =
       events_weight: 0.1,
     };
 
-    // 1. Filter for assistant messages that contain tables (using the pipe symbol)
-    const tableMessages = messages
-      .filter(m => m.role === 'assistant' && m.content.includes('|'))
-      .reverse(); // Start from newest
+    // Prefer currentParams if the AI has updated any weight key
+    if (currentParams && WEIGHT_KEYS.some(k => k in currentParams)) {
+      return {
+        data: { ...defaults, ...Object.fromEntries(WEIGHT_KEYS.map(k => [k, currentParams[k] ?? defaults[k]])) },
+        source: 'Updated by AI',
+      };
+    }
 
-    if (tableMessages.length === 0) return { data: weights, source: 'System Default' };
-
-    const latestContent = tableMessages[0].content;
-    const lines = latestContent.split('\n');
-
-    lines.forEach(line => {
-      if (!line.includes('|')) return;
-      const cells = line.split('|').map(c => c.trim().toLowerCase());
-      
-      // Look for a number in the row
-      const value = parseFloat(cells.find(c => !isNaN(parseFloat(c)) && isFinite(c)));
-      if (isNaN(value)) return;
-
-      // Fuzzy map the row text to our keys
-      if (cells.some(c => fuzzyKeyMatch(c, 'severity'))) weights.severity_weight = value;
-      if (cells.some(c => fuzzyKeyMatch(c, 'funding'))) weights.funding_gap_weight = value;
-      if (cells.some(c => fuzzyKeyMatch(c, 'need'))) weights.need_weight = value;
-      if (cells.some(c => fuzzyKeyMatch(c, 'ipc') || fuzzyKeyMatch(c, 'food'))) weights.ipc_weight = value;
-      if (cells.some(c => fuzzyKeyMatch(c, 'conflict') || fuzzyKeyMatch(c, 'event'))) weights.events_weight = value;
-    });
-
-    return { data: weights, source: 'Extracted from Chat' };
-  }, [messages]);
+    return { data: defaults, source: 'System Default' };
+  }, [currentParams]);
 
   const { data, source } = detectedWeights;
 
@@ -62,9 +37,9 @@ const Weights = ({ messages = [], setMessages, currentParams, onUpdateState }) =
       <div style={styles.headerRow}>
         <h2 style={styles.header}>Active Methodology</h2>
         <span style={{
-          ...styles.statusBadge, 
-          backgroundColor: source === 'System Default' ? '#eee' : '#e1f5fe',
-          color: source === 'System Default' ? '#666' : '#0288d1'
+          ...styles.statusBadge,
+          backgroundColor: source === 'System Default' ? '#eee' : '#e6ffed',
+          color: source === 'System Default' ? '#666' : '#22863a'
         }}>
           {source}
         </span>
