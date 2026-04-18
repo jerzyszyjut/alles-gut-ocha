@@ -5,10 +5,14 @@ import React, { useState, useMemo } from 'react';
  * @param {string} initialFocus - Optional initial search term
  */
 const CsvViewer = ({ data = [], totalCount = 0, filter, setFilter }) => {
-  if (!data || data.length === 0) return <p>No data available to view.</p>;
+  let headers;
 
+  if (!data || data.length === 0) {
   // Extract headers from the first object
-  const headers = Object.keys(data[0]);
+    headers = [];
+  } else {
+    headers = Object.keys(data[0]);
+  }
 
   return (
     <div style={styles.container}>
