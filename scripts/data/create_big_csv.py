@@ -121,12 +121,18 @@ def create_aggregate_base():
     return final_analysis
 
 def _neglect_score_on_sample(sample):
-    """Compute neglect_index for a (possibly bootstrapped) dataframe. Returns a Series aligned to sample.index."""
-    coverage = (
+    """Compute neglect_index for a (possibly bootstrapped) dataframe. Returns a Series aligned to sample.index.
+    All ranks are within-cluster so each sector is compared only to peer countries in the same sector."""
+    tmp = pd.DataFrame(index=sample.index)
+    tmp['cluster'] = sample['cluster'].values
+    tmp['coverage'] = (
         sample['funding_cluster_specific'] / sample['requirements_cluster_specific']
-    ).fillna(0).clip(upper=1.0)
+    ).fillna(0).clip(upper=1.0).values
+    tmp['People_In_Need'] = sample['People_In_Need'].values
 
-    need_rank = sample['People_In_Need'].rank(pct=True)
+    # Rank within cluster: Food Security vs Food Security, Health vs Health, etc.
+    need_rank     = tmp.groupby('cluster')['People_In_Need'].transform(lambda x: x.rank(pct=True))
+    coverage_rank = tmp.groupby('cluster')['coverage'].transform(lambda x: x.rank(pct=True))
 
     ipc_phase_cols = [f'ipc_phase_{i}_people' for i in range(1, 6)]
     if all(c in sample.columns for c in ipc_phase_cols):
@@ -140,7 +146,10 @@ def _neglect_score_on_sample(sample):
         has_ipc = pd.Series(False, index=sample.index)
 
     if 'civilian_events' in sample.columns:
-        events_rank = sample.groupby('year')['civilian_events'].transform(
+        tmp['civilian_events'] = sample['civilian_events'].values
+        tmp['year'] = sample['year'].values
+        # Rank within cluster+year: compares countries on civilian incidents within the same sector-year
+        events_rank = tmp.groupby(['cluster', 'year'])['civilian_events'].transform(
             lambda x: x.rank(pct=True, na_option='keep')
         )
     else:
@@ -156,7 +165,7 @@ def _neglect_score_on_sample(sample):
     severity[has_ipc_only] = 0.5 * need_rank[has_ipc_only] + 0.5 * ipc_severity_norm[has_ipc_only]
     severity[has_ev_only]  = 0.6 * need_rank[has_ev_only]  + 0.4 * events_rank[has_ev_only]
 
-    return severity * 0.6 + (1 - coverage.rank(pct=True)) * 0.4
+    return severity * 0.6 + (1 - coverage_rank) * 0.4
 
 
 def _bagging_uncertainty(df, n_bootstrap=300, seed=42):
