@@ -7,6 +7,7 @@ const renderMarkdown = (text) => {
 
   const parseInline = (str) => {
     const parts = [];
+    // Basic inline matching for code, bold, italic
     const re = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|__[^_]+__|_[^_]+_)/g;
     let last = 0, m;
     while ((m = re.exec(str)) !== null) {
@@ -18,25 +19,28 @@ const renderMarkdown = (text) => {
       last = m.index + tok.length;
     }
     if (last < str.length) parts.push(str.slice(last));
-    return parts;
+    return parts.length > 0 ? parts : str; // Return string if no matches to avoid empty arrays
   };
 
   while (i < lines.length) {
     const line = lines[i];
 
     if (line.startsWith('```')) {
+      // Code Blocks
       const lang = line.slice(3).trim();
       const codeLines = [];
       i++;
       while (i < lines.length && !lines[i].startsWith('```')) { codeLines.push(lines[i]); i++; }
       elements.push(<pre key={i} style={styles.codeBlock}><code>{codeLines.join('\n')}</code></pre>);
     } else if (/^#{1,6}\s/.test(line)) {
+      // Headings
       const level = line.match(/^(#+)/)[1].length;
       const content = line.replace(/^#+\s/, '');
       const Tag = `h${Math.min(level, 6)}`;
       const fs = ['20px','18px','16px','15px','14px','14px'][level-1];
       elements.push(<Tag key={i} style={{margin:'6px 0 2px',fontSize:fs}}>{parseInline(content)}</Tag>);
     } else if (/^[-*+]\s/.test(line)) {
+      // Bullet Lists
       const items = [];
       while (i < lines.length && /^[-*+]\s/.test(lines[i])) {
         items.push(<li key={i}>{parseInline(lines[i].replace(/^[-*+]\s/,''))}</li>);
@@ -45,6 +49,7 @@ const renderMarkdown = (text) => {
       elements.push(<ul key={`ul-${i}`} style={{margin:'4px 0',paddingLeft:'18px'}}>{items}</ul>);
       continue;
     } else if (/^\d+\.\s/.test(line)) {
+      // Numbered Lists
       const items = [];
       while (i < lines.length && /^\d+\.\s/.test(lines[i])) {
         items.push(<li key={i}>{parseInline(lines[i].replace(/^\d+\.\s/,''))}</li>);
@@ -52,10 +57,56 @@ const renderMarkdown = (text) => {
       }
       elements.push(<ol key={`ol-${i}`} style={{margin:'4px 0',paddingLeft:'18px'}}>{items}</ol>);
       continue;
+    } else if (line.trim().startsWith('|')) {
+      // TABLES
+      const tableLines = [];
+      while (i < lines.length && lines[i].trim().startsWith('|')) {
+        tableLines.push(lines[i].trim());
+        i++;
+      }
+      
+      // Basic validation: needs at least 2 lines (header + separator like |---|---|)
+      if (tableLines.length >= 2 && /^\|?\s*[-:]+[\-| :]*\s*\|?$/.test(tableLines[1])) {
+        const parseRow = (rowStr) => {
+          // Remove leading and trailing pipes before splitting
+          let cleaned = rowStr.replace(/^\|/, '').replace(/\|$/, '');
+          return cleaned.split('|').map(cell => cell.trim());
+        };
+
+        const headers = parseRow(tableLines[0]);
+        const rows = tableLines.slice(2).map(parseRow);
+
+        elements.push(
+          <div key={`table-wrapper-${i}`} style={styles.tableWrapper}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  {headers.map((h, idx) => <th key={`th-${idx}`} style={styles.th}>{parseInline(h)}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, rIdx) => (
+                  <tr key={`tr-${rIdx}`}>
+                    {row.map((cell, cIdx) => <td key={`td-${cIdx}`} style={styles.td}>{parseInline(cell)}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      } else {
+        // Fallback if it looks like a pipe but isn't a valid markdown table
+        tableLines.forEach((tLine, tIdx) => {
+          elements.push(<p key={`fallback-${i}-${tIdx}`} style={{margin:'2px 0'}}>{parseInline(tLine)}</p>);
+        });
+      }
+      continue;
     } else if (line.trim() === '') {
+      // Blank lines
       elements.push(<br key={i} />);
     } else {
-      elements.push(<p key={i} style={{margin:'2px 0'}}>{parseInline(line)}</p>);
+      // Standard Paragraphs
+      elements.push(<p key={i} style={{margin:'4px 0'}}>{parseInline(line)}</p>);
     }
     i++;
   }
