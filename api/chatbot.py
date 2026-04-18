@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from typing import Any
 
@@ -9,7 +10,10 @@ import anthropic
 import pandas as pd
 from pathlib import Path
 
+from api.hdx_client import HDXClient, HDXClientError
 from api.scorer import aggregate_by_country_cluster, compute_scores, iso3_to_name
+
+logger = logging.getLogger(__name__)
 
 # ── Static system prompt ──────────────────────────────────────────────────────
 # Cached at the Anthropic level — changes here invalidate the cache.
@@ -101,6 +105,15 @@ _SYSTEM_STATIC = (
     "vs conflict.\n"
     "4. **Change the view**: When users want to focus on something different, call "
     "`update_ranking_parameters` to update the frontend visualisation.\n\n"
+    "5. **Use live HDX data**: When users ask about specific countries, call the appropriate "
+    "HDX live-data tools to supplement the pre-computed CSV rankings:\n"
+    "   - People in need / sector breakdowns → `hdx_get_humanitarian_needs`\n"
+    "   - Refugees, IDPs, displaced people → `hdx_get_affected_populations`\n"
+    "   - Food insecurity / IPC phases → `hdx_get_food_security`\n"
+    "   - Armed conflict / ACLED events → `hdx_get_conflict_events`\n"
+    "   - Funding flows / FTS data → `hdx_get_funding`\n"
+    "   - Active organizations / response coverage → `hdx_get_operational_presence`\n"
+    "   - Location/dataset metadata → `hdx_search_locations`, `hdx_get_dataset_info`\n\n"
     "## Behavioural rules\n"
     "- Always be specific: cite actual neglect_index values, coverage percentages, "
     "people in need counts.\n"
@@ -110,19 +123,30 @@ _SYSTEM_STATIC = (
     "weight change means mathematically.\n"
     "- If a user asks 'why is X ranked high', query X's data first, then explain "
     "each contributing metric.\n"
-    "- Keep responses concise and decision-focused — this is a triage tool.\n\n"
-    "## Output format rules — CRITICAL\n"
-    "The frontend displays structured data separately from your text reply. "
-    "Your text reply must NEVER duplicate data that is already delivered via tools:\n"
-    "- When you call `update_ranking_parameters`, do NOT include a markdown table of "
-    "results and do NOT list the changed parameters with before/after values. "
-    "The frontend renders the updated ranking automatically. "
-    "Just write 1–3 sentences explaining *why* the change matters analytically.\n"
-    "- When you call `query_ranking`, do NOT reproduce the results as a markdown table. "
-    "Reference specific values inline (e.g. 'Sudan Food Security has 0.3% coverage') "
-    "but do not reprint the full dataset.\n"
-    "- Never output sections titled '### New top 5', '### What changed', "
-    "'### Parameters updated', or any table that mirrors tool output.\n\n"
+    "- Keep responses concise and decision-focused — this is a triage tool.\n"
+    "- When you use data from any HDX tool, always end your response with a brief "
+    "'**Sources:**' line that names the specific datasets used "
+    "(e.g. 'HDX HAPI — Refugees & Persons of Concern', 'HDX HAPI — FTS Funding'). "
+    "For pre-computed CSV data cite 'FTS / HPC / IPC / ACLED via Neglect Index dataset'.\n\n"
+    "## Writing style — CRITICAL\n"
+    "Write for a human reader, not a data analyst. Your reply is a conversation, not a report.\n\n"
+    "**Narrative over tables**: Weave numbers into prose. "
+    "Write 'Syria has 15 million people in need of food assistance — less than 0.3% of that is funded' "
+    "rather than a markdown table of metrics. Use a table only if you are comparing 3+ countries side-by-side "
+    "and the comparison genuinely requires it.\n\n"
+    "**No raw data dumps**: Do not list every row from a tool result. Pick 2–4 striking figures "
+    "that tell the story and leave the rest. The frontend shows the full data.\n\n"
+    "**No monthly chronologies unless asked**: If you fetched time-series data (e.g. ACLED events "
+    "by month), synthesise it into a sentence or two — 'violence peaked in early 2018 then fell to "
+    "near-zero through 2023 before resurging in late 2024' — rather than listing every data point.\n\n"
+    "**No capability menus**: Never end a response with a bullet list of things you *could* do next "
+    "('I can pull X, show Y, re-weight Z'). If a follow-up is natural, suggest one thing in one sentence.\n\n"
+    "**No technical caveats in the body**: API limits, row caps, and data-availability notes belong in "
+    "a short italic footnote at the bottom, not inline warnings that interrupt the narrative.\n\n"
+    "**Tool output rules**: The frontend renders structured data from tools separately.\n"
+    "- After `update_ranking_parameters`: 1–2 sentences on *why* the change matters analytically — nothing else.\n"
+    "- After `query_ranking`: reference 1–3 specific values inline; never reproduce the full result set.\n"
+    "- Never output sections titled '### New top 5', '### What changed', '### Parameters updated'.\n\n"
     + _METHODOLOGY +
     "\n\n## Scorer Implementation (`scorer.py`)\n"
     "Below is the exact Python code used to calculate the indices. Reference this if the user "
@@ -247,6 +271,191 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "hdx_search_locations",
+        "description": (
+            "Search HDX locations metadata. Use when users ask for available "
+            "countries/locations or to find locations matching a name pattern."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name_pattern": {
+                    "type": "string",
+                    "description": "Optional substring pattern for location names.",
+                },
+                "has_hrp": {
+                    "type": "boolean",
+                    "description": "Optional filter for locations with HRP coverage.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum locations to return (default 25).",
+                },
+            },
+        },
+    },
+    {
+        "name": "hdx_get_dataset_info",
+        "description": (
+            "Get details for a specific HDX dataset by its dataset_hdx_id."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dataset_hdx_id": {
+                    "type": "string",
+                    "description": "HDX dataset identifier.",
+                },
+            },
+            "required": ["dataset_hdx_id"],
+        },
+    },
+    {
+        "name": "hdx_get_humanitarian_needs",
+        "description": (
+            "Fetch live people-in-need figures from HDX HAPI by country and cluster. "
+            "Use when the user asks for current humanitarian needs data beyond what the "
+            "pre-computed CSV ranking already shows."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location_code": {
+                    "type": "string",
+                    "description": "ISO-3 country code, e.g. 'AFG', 'SYR', 'SDN'.",
+                },
+                "year": {"type": "integer", "description": "4-digit year, e.g. 2024."},
+                "cluster_code": {
+                    "type": "string",
+                    "description": "Cluster/sector code to filter results.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max records to return (default 100).",
+                },
+            },
+        },
+    },
+    {
+        "name": "hdx_get_affected_populations",
+        "description": (
+            "Fetch live refugee, IDP, and displaced population counts from HDX HAPI. "
+            "Use when the user asks about forced displacement, refugee numbers, or IDPs."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location_code": {
+                    "type": "string",
+                    "description": "ISO-3 country code.",
+                },
+                "year": {"type": "integer", "description": "4-digit year."},
+                "population_group_code": {
+                    "type": "string",
+                    "description": (
+                        "Population group: 'REF' (refugees), 'IDP' (internally displaced), "
+                        "'STA' (stateless), 'OOC' (others of concern). Omit for all groups."
+                    ),
+                },
+                "limit": {"type": "integer", "description": "Max records to return."},
+            },
+        },
+    },
+    {
+        "name": "hdx_get_food_security",
+        "description": (
+            "Fetch live IPC food security phase data from HDX HAPI. "
+            "Use when the user asks about food insecurity severity, famine risk, or IPC phases."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location_code": {
+                    "type": "string",
+                    "description": "ISO-3 country code.",
+                },
+                "year": {"type": "integer", "description": "4-digit year."},
+                "ipc_phase": {
+                    "type": "integer",
+                    "description": "Filter by IPC phase: 1=Minimal, 2=Stressed, 3=Crisis, 4=Emergency, 5=Famine.",
+                },
+                "limit": {"type": "integer", "description": "Max records to return."},
+            },
+        },
+    },
+    {
+        "name": "hdx_get_conflict_events",
+        "description": (
+            "Fetch live ACLED conflict event counts from HDX HAPI. "
+            "Use when the user asks about violence, armed conflict, or security situations."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location_code": {
+                    "type": "string",
+                    "description": "ISO-3 country code.",
+                },
+                "year": {"type": "integer", "description": "4-digit year."},
+                "event_type": {
+                    "type": "string",
+                    "description": "Type of conflict event to filter by (e.g. 'battles', 'explosions').",
+                },
+                "limit": {"type": "integer", "description": "Max records to return."},
+            },
+        },
+    },
+    {
+        "name": "hdx_get_funding",
+        "description": (
+            "Fetch live FTS funding flow data from HDX HAPI. "
+            "Use when the user asks about aid funding, donor contributions, or financial gaps "
+            "beyond what the pre-computed CSV already provides."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location_code": {
+                    "type": "string",
+                    "description": "ISO-3 country code.",
+                },
+                "year": {"type": "integer", "description": "4-digit year."},
+                "cluster_code": {
+                    "type": "string",
+                    "description": "Cluster/sector code to filter by.",
+                },
+                "limit": {"type": "integer", "description": "Max records to return."},
+            },
+        },
+    },
+    {
+        "name": "hdx_get_operational_presence",
+        "description": (
+            "Fetch live organizational presence data from HDX HAPI. "
+            "Use when the user asks which NGOs or UN agencies are active in a country, "
+            "or wants to know response coverage by cluster."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location_code": {
+                    "type": "string",
+                    "description": "ISO-3 country code.",
+                },
+                "year": {"type": "integer", "description": "4-digit year."},
+                "cluster_code": {
+                    "type": "string",
+                    "description": "Cluster/sector code to filter by.",
+                },
+                "org_acronym": {
+                    "type": "string",
+                    "description": "Filter by organization acronym, e.g. 'UNHCR', 'WFP'.",
+                },
+                "limit": {"type": "integer", "description": "Max records to return."},
+            },
+        },
+    },
 ]
 
 # ── Default parameters ────────────────────────────────────────────────────────
@@ -350,6 +559,7 @@ def chat(
     messages: list[dict[str, str]],
     current_params: dict[str, Any],
     df_base: pd.DataFrame,
+    hdx_client: HDXClient | None = None,
 ) -> dict[str, Any]:
     """Run one chat turn.
 
@@ -404,6 +614,16 @@ def chat(
             messages=api_messages,
         )
 
+        tool_names = [
+            b.name for b in response.content
+            if getattr(b, "type", None) == "tool_use"
+        ]
+        logger.info(
+            "Claude response: stop_reason=%s tool_names=%s",
+            response.stop_reason,
+            tool_names,
+        )
+
         if response.stop_reason == "end_turn":
             reply = next(
                 (b.text for b in response.content if b.type == "text"), ""
@@ -447,6 +667,139 @@ def chat(
                             "applied_changes": block.input,
                             "top5_preview": snapshot[:5],
                         }, default=str),
+                    })
+
+
+                elif block.name == "hdx_search_locations":
+                    logger.info("Entered branch: hdx_search_locations")
+                    if hdx_client is None:
+                        content = {
+                            "status": "error",
+                            "message": "HDX integration is not configured. Set HDX_APP_IDENTIFIER.",
+                        }
+                    else:
+                        try:
+                            name_pattern = block.input.get("name_pattern")
+                            has_hrp = block.input.get("has_hrp")
+                            limit = int(block.input.get("limit", 25))
+                            logger.warning(
+                                "Chat tool hdx_search_locations called: name_pattern=%s has_hrp=%s limit=%s",
+                                name_pattern,
+                                has_hrp,
+                                limit,
+                            )
+
+                            content = hdx_client.search_locations(
+                                name_pattern=name_pattern,
+                                has_hrp=has_hrp,
+                                limit=limit,
+                            )
+
+                            logger.info(
+                                "Chat tool hdx_search_locations succeeded: count=%s",
+                                content.get("count") if isinstance(content, dict) else None,
+                            )
+                        except (HDXClientError, ValueError) as exc:
+                            logger.exception("Chat tool hdx_search_locations failed")
+                            content = {"status": "error", "message": str(exc)}
+
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps(content, default=str),
+                    })
+
+                elif block.name == "hdx_get_dataset_info":
+                    if hdx_client is None:
+                        content = {
+                            "status": "error",
+                            "message": "HDX integration is not configured. Set HDX_APP_IDENTIFIER.",
+                        }
+                    else:
+                        try:
+                            content = hdx_client.get_dataset_info(
+                                dataset_hdx_id=str(block.input.get("dataset_hdx_id", ""))
+                            )
+                        except HDXClientError as exc:
+                            content = {"status": "error", "message": str(exc)}
+
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps(content, default=str),
+                    })
+
+                elif block.name in {
+                    "hdx_get_humanitarian_needs",
+                    "hdx_get_affected_populations",
+                    "hdx_get_food_security",
+                    "hdx_get_conflict_events",
+                    "hdx_get_funding",
+                    "hdx_get_operational_presence",
+                }:
+                    if hdx_client is None:
+                        content = {
+                            "status": "error",
+                            "message": "HDX integration is not configured. Set HDX_APP_IDENTIFIER.",
+                        }
+                    else:
+                        try:
+                            inp = block.input
+                            loc = inp.get("location_code")
+                            year_v = inp.get("year")
+                            limit_v = int(inp.get("limit", 100))
+
+                            if block.name == "hdx_get_humanitarian_needs":
+                                content = hdx_client.get_humanitarian_needs(
+                                    location_code=loc,
+                                    year=year_v,
+                                    cluster_code=inp.get("cluster_code"),
+                                    limit=limit_v,
+                                )
+                            elif block.name == "hdx_get_affected_populations":
+                                content = hdx_client.get_affected_populations(
+                                    location_code=loc,
+                                    year=year_v,
+                                    population_group_code=inp.get("population_group_code"),
+                                    limit=limit_v,
+                                )
+                            elif block.name == "hdx_get_food_security":
+                                content = hdx_client.get_food_security(
+                                    location_code=loc,
+                                    year=year_v,
+                                    ipc_phase=inp.get("ipc_phase"),
+                                    limit=limit_v,
+                                )
+                            elif block.name == "hdx_get_conflict_events":
+                                content = hdx_client.get_conflict_events(
+                                    location_code=loc,
+                                    year=year_v,
+                                    event_type=inp.get("event_type"),
+                                    limit=limit_v,
+                                )
+                            elif block.name == "hdx_get_funding":
+                                content = hdx_client.get_funding(
+                                    location_code=loc,
+                                    year=year_v,
+                                    cluster_code=inp.get("cluster_code"),
+                                    limit=limit_v,
+                                )
+                            else:  # hdx_get_operational_presence
+                                content = hdx_client.get_operational_presence(
+                                    location_code=loc,
+                                    year=year_v,
+                                    cluster_code=inp.get("cluster_code"),
+                                    org_acronym=inp.get("org_acronym"),
+                                    limit=limit_v,
+                                )
+                        except HDXClientError as exc:
+                            logger.exception("Chat tool %s failed", block.name)
+                            content = {"status": "error", "message": str(exc)}
+
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps(content, default=str),
                     })
 
             # Append assistant turn + tool results and continue the loop

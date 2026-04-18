@@ -19,18 +19,29 @@ load_dotenv()
 
 from api.chatbot import DEFAULT_PARAMS
 from api.chatbot import chat as chatbot_chat
+from api.hdx_client import HDXClient, HDXClientError, create_hdx_client_from_env
 from api.scorer import aggregate_by_country_cluster, compute_scores, create_aggregate_base, iso3_to_name
 
 _df_base: pd.DataFrame | None = None
+_hdx_client: HDXClient | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _df_base
+    global _df_base, _hdx_client
     print("Loading base data …")
     _df_base = create_aggregate_base()
     print(f"Loaded {len(_df_base):,} rows.")
-    yield
+    _hdx_client = create_hdx_client_from_env()
+    if _hdx_client is None:
+        print("HDX integration disabled (HDX_APP_IDENTIFIER not set).")
+    else:
+        print("HDX integration enabled.")
+    try:
+        yield
+    finally:
+        if _hdx_client is not None:
+            _hdx_client.close()
 
 
 app = FastAPI(
@@ -133,6 +144,15 @@ def _row_to_model(row: pd.Series, critical: float, high: float) -> CrisisRow:
         severity_case=row.get('severity_case'),
         priority_label=_priority_label(row['neglect_index'], critical, high),
     )
+
+
+def _require_hdx_client() -> HDXClient:
+    if _hdx_client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="HDX integration not configured. Set HDX_APP_IDENTIFIER and restart API.",
+        )
+    return _hdx_client
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -403,6 +423,49 @@ def get_crisis(
     return _row_to_model(row.iloc[0], critical_threshold, high_threshold)
 
 
+@app.get("/hdx/server-info", summary="HDX client configuration status")
+def get_hdx_server_info() -> dict[str, Any]:
+    client = _require_hdx_client()
+    return {
+        "server_name": "HDX API Client",
+        "base_url": client.base_url,
+        "rate_limit_requests": client.rate_limit_requests,
+        "rate_limit_period_seconds": client.rate_limit_period,
+        "status": "enabled",
+    }
+
+
+@app.get("/hdx/version", summary="HDX API version")
+def get_hdx_version() -> dict[str, Any]:
+    client = _require_hdx_client()
+    try:
+        return client.get_version()
+    except HDXClientError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/hdx/locations", summary="Search HDX locations metadata")
+def get_hdx_locations(
+    name_pattern: str | None = Query(None, description="Optional location name substring"),
+    has_hrp: bool | None = Query(None, description="Filter by HRP availability"),
+    limit: int = Query(25, ge=1, le=500, description="Max locations to return"),
+) -> dict[str, Any]:
+    client = _require_hdx_client()
+    try:
+        return client.search_locations(name_pattern=name_pattern, has_hrp=has_hrp, limit=limit)
+    except HDXClientError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/hdx/dataset/{dataset_hdx_id}", summary="Get HDX dataset metadata")
+def get_hdx_dataset(dataset_hdx_id: str) -> dict[str, Any]:
+    client = _require_hdx_client()
+    try:
+        return client.get_dataset_info(dataset_hdx_id)
+    except HDXClientError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 # ── Chat endpoint ─────────────────────────────────────────────────────────────
 
 class ChatMessage(BaseModel):
@@ -463,7 +526,7 @@ def post_chat(request: ChatRequest):
 
     api_messages = [{"role": m.role, "content": m.content} for m in request.messages]
     try:
-        result = chatbot_chat(api_messages, request.current_params, _df_base)
+        result = chatbot_chat(api_messages, request.current_params, _df_base, _hdx_client)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Claude API error: {exc}") from exc
     return ChatResponse(**result)
