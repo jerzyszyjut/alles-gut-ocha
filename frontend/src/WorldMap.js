@@ -35,42 +35,43 @@ const WorldMap = ({ setHoveredCountry, availableCountries, activeFilter }) => {
           {({ geographies }) =>
             geographies.map((geo) => {
               const iso3 = geo.id || geo.properties.ISO_A3;
-              const hasData = availableCountries?.has(iso3);
+              
+              // 1. Identify states
               const isSelected = activeFilter === iso3;
+              const hasData = availableCountries?.has(iso3);
 
               return (
                 <Geography
                   key={geo.rsmKey}
                   geography={geo}
-                  // HOVER: Only updates local tooltip, doesn't touch the input box
-                  onMouseEnter={() => {
-                    setTooltipContent(geo.properties.name);
-                  }}
-                  onMouseLeave={() => {
-                    setTooltipContent("");
-                  }}
-                  // CLICK: This is now the ONLY thing that updates the input box
+                  onMouseEnter={() => setTooltipContent(geo.properties.name)}
+                  onMouseLeave={() => setTooltipContent("")}
                   onClick={() => {
-                    // Toggle logic: if clicking the already selected country, clear it.
+                    // Toggle: click same country again to clear selection
                     const newFilter = isSelected ? "" : iso3;
                     setHoveredCountry(newFilter);
                   }}
                   style={{
                     default: { 
-                      // Colors: Selected (Blue) > Has Data (Gray) > No Data (Light Gray)
-                      fill: isSelected ? "#3b82f6" : (hasData ? "#94a3b8" : "#D6D6DA"), 
+                      // 2. Priority Fill Logic
+                      fill: isSelected 
+                        ? "#1d4ed8" // Deep blue for CLICKED
+                        : hasData 
+                          ? "#94a3b8" // Medium gray for AVAILABLE (remains visible)
+                          : "#D6D6DA", // Light gray for NO DATA
                       outline: "none",
-                      stroke: isSelected ? "#1e40af" : "#fff",
+                      stroke: isSelected ? "#fff" : "#fff",
                       strokeWidth: isSelected ? 1.5 : 0.5,
-                      transition: "fill 0.2s"
+                      transition: "all 200ms"
                     },
                     hover: { 
-                      fill: "#60a5fa", // Lighter blue on hover
+                      // 3. Hover Feedback
+                      fill: isSelected ? "#1e40af" : (hasData ? "#60a5fa" : "#adb5bd"), 
                       outline: "none", 
                       cursor: "pointer" 
                     },
                     pressed: { 
-                      fill: "#2563eb", 
+                      fill: "#1e3a8a", 
                       outline: "none" 
                     },
                   }}

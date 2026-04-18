@@ -4,13 +4,12 @@ import CsvViewer from './CsvViewer';
 import WorldMap from "./WorldMap";
 
 function App() {
-  // 1. App-level state for Backend Data and API Parameters
   const [csvData, setCsvData] = useState([]);
   const [currentParams, setCurrentParams] = useState({});
   const [totalMatches, setTotalMatches] = useState(0);
-
   const [filterText, setFilterText] = useState("");
 
+  // Fetch data from your FastAPI/Node backend
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
@@ -20,22 +19,26 @@ function App() {
         setCsvData(data.results || []);
         setTotalMatches(data.total_matches || 0);
       } catch (err) {
-        console.error("Failed to fetch initial ranking data", err);
+        console.error("Failed to fetch ranking data", err);
       }
     };
     fetchInitialData();
   }, []);
 
   const handleStateUpdateFromChat = (newParams, newSnapshot) => {
-    if (newParams) {
-      setCurrentParams(newParams);
-    }
+    if (newParams) setCurrentParams(newParams);
     if (newSnapshot && newSnapshot.length > 0) {
       setCsvData(newSnapshot);
-      setFilterText(""); // Clear local filter when AI changes the global view
+      setFilterText(""); // Reset local search when AI updates data
     }
   };
 
+  // 1. HIGHLIGHT LOGIC: Permanent list of ISOs that exist in your current data
+  const allAvailableISOs = useMemo(() => {
+    return new Set(csvData.map(row => row.countryCode)); 
+  }, [csvData]);
+
+  // 2. FILTER LOGIC: Sub-filtering for the CSV table based on Click/Search
   const filteredData = useMemo(() => {
     if (!filterText) return csvData;
     const lowerFilter = filterText.toLowerCase();
@@ -44,27 +47,22 @@ function App() {
         String(val).toLowerCase().includes(lowerFilter)
       )
     );
-  }, [filterText, csvData]);
-
-  const searchMatches = useMemo(() => {
-    return new Set(filteredData.map(row => row.countryCode)); 
-  }, [filteredData]);
+  }, [csvData, filterText]);
 
   return (
     <div style={styles.appContainer}>
-      
-      {/* LEFT SIDE: Map (Top) and CSV (Bottom) */}
       <div style={styles.mainContent}>
         
-        {/* World Map Component */}
+        {/* TOP: Map Section */}
         <div style={styles.mapSection}>
            <WorldMap
             setHoveredCountry={setFilterText}
-            availableCountries={searchMatches}
+            availableCountries={allAvailableISOs} 
+            activeFilter={filterText}             
           />
         </div>
 
-        {/* CSV Viewer at the bottom */}
+        {/* BOTTOM: CSV Section */}
         <div style={styles.csvSection}>
           <CsvViewer 
             data={filteredData}
@@ -75,7 +73,7 @@ function App() {
         </div>
       </div>
 
-      {/* RIGHT SIDE: Chat pinned to the right */}
+      {/* RIGHT: Chat Sidebar */}
       <div style={styles.sidebar}>
         <Chat 
           currentParams={currentParams} 
@@ -87,42 +85,11 @@ function App() {
 }
 
 const styles = {
-  appContainer: {
-    display: 'flex',
-    flexDirection: 'row',
-    height: '100vh',    // Full viewport height
-    width: '100vw',     // Full viewport width
-    overflow: 'hidden', // Forces "No Scroll" 
-    backgroundColor: '#f0f2f5',
-  },
-  mainContent: {
-    display: 'flex',
-    flexDirection: 'column',
-    flex: 1,            // Takes up all space not used by the sidebar
-    height: '100%',
-  },
-  mapSection: {
-    flex: 1,            // Map takes up all remaining top space
-    display: 'flex',
-    flexDirection: 'column',
-    position: 'relative', // Ensures map renders correctly within bounds
-    margin: '10px',
-    borderRadius: '12px',
-    backgroundColor: '#fff',
-    border: '1px solid #e1e4e8',
-    overflow: 'hidden',
-  },
-  csvSection: {
-    height: '40%',      // CSV takes up the bottom 40%
-    padding: '0 10px 10px 10px',
-    overflow: 'hidden'
-  },
-  sidebar: {
-    width: '400px',     // Fixed width for the chat
-    height: '100vh',
-    padding: '10px',
-    display: 'flex',
-  }
+  appContainer: { display: 'flex', flexDirection: 'row', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: '#f0f2f5' },
+  mainContent: { display: 'flex', flexDirection: 'column', flex: 1, height: '100%' },
+  mapSection: { flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', margin: '10px', borderRadius: '12px', backgroundColor: '#fff', border: '1px solid #e1e4e8', overflow: 'hidden' },
+  csvSection: { height: '40%', padding: '0 10px 10px 10px', overflow: 'hidden' },
+  sidebar: { width: '400px', height: '100vh', padding: '10px', display: 'flex' }
 };
 
 export default App;
