@@ -3,6 +3,7 @@ import CsvViewer from "./CsvViewer";
 import WorldMap from "./WorldMap";
 import Weights from "./Weights";
 import TsneChart from "./TsneChart";
+import CounterfactualSlider from "./CounterfactualSlider";
 
 function App() {
   const [csvData, setCsvData] = useState([]);
@@ -13,6 +14,7 @@ function App() {
   const [messages, setMessages] = useState([
     { role: 'assistant', content: 'Hello! I am your humanitarian crisis analyst. I can explain the neglect index, adjust weights, or filter the data. How can I help?', isGreeting: true }
   ]);
+  const [selectedCrisis, setSelectedCrisis] = useState(null);
 
   // Fetch data from your FastAPI/Node backend
   useEffect(() => {
@@ -93,12 +95,21 @@ function App() {
             totalCount={totalMatches}
             filter={filterText}
             setFilter={setFilterText}
+            selectedCrisis={selectedCrisis}
+            onSelectCrisis={setSelectedCrisis}
           />
         </div>
       </div>
 
       {/* RIGHT: Sidebar */}
       <div style={styles.sidebar}>
+        {selectedCrisis && (
+          <CounterfactualSlider
+            crisis={selectedCrisis}
+            currentParams={currentParams}
+            onClose={() => setSelectedCrisis(null)}
+          />
+        )}
         <Weights
           messages={messages}
           setMessages={setMessages}

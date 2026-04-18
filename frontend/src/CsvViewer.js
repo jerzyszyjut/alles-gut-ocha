@@ -22,7 +22,7 @@ const formatLabel = (key) =>
 
 const NON_NUMERIC_COLUMNS = new Set(['countryCode', 'countryName', 'cluster', 'priority_label']);
 
-const CsvViewer = ({ data = [], totalCount = 0, filter, setFilter }) => {
+const CsvViewer = ({ data = [], totalCount = 0, filter, setFilter, selectedCrisis, onSelectCrisis }) => {
   let headers;
 
   if (!data || data.length === 0) {
@@ -30,6 +30,17 @@ const CsvViewer = ({ data = [], totalCount = 0, filter, setFilter }) => {
   } else {
     headers = Object.keys(data[0]).filter((h) => !HIDDEN_COLUMNS.has(h));
   }
+
+  const isSelected = (row) =>
+    selectedCrisis &&
+    selectedCrisis.countryCode === row.countryCode &&
+    selectedCrisis.cluster === row.cluster;
+
+  const handleRowClick = (row) => {
+    if (onSelectCrisis) {
+      onSelectCrisis(isSelected(row) ? null : row);
+    }
+  };
 
   return (
     <div style={styles.container}>
@@ -42,6 +53,7 @@ const CsvViewer = ({ data = [], totalCount = 0, filter, setFilter }) => {
           style={styles.searchInput}
         />
         <span style={styles.stats}>
+          {onSelectCrisis && <span style={styles.hint}>Click a row to explore counterfactual funding · </span>}
           Showing <strong>{data.length}</strong> of <strong>{totalCount}</strong> entries
         </span>
       </div>
@@ -56,30 +68,39 @@ const CsvViewer = ({ data = [], totalCount = 0, filter, setFilter }) => {
             </tr>
           </thead>
           <tbody>
-            {data.map((row, i) => (
-              <tr key={i} style={i % 2 === 0 ? styles.trEven : styles.trOdd}>
-                {headers.map((h) => {
-                  const cellValue = row[h];
-                  const isEmpty = cellValue === null || cellValue === undefined || cellValue === '';
+            {data.map((row, i) => {
+              const selected = isSelected(row);
+              const baseStyle = i % 2 === 0 ? styles.trEven : styles.trOdd;
+              const rowStyle = selected
+                ? { ...baseStyle, ...styles.trSelected }
+                : onSelectCrisis
+                ? { ...baseStyle, cursor: 'pointer' }
+                : baseStyle;
+              return (
+                <tr key={i} style={rowStyle} onClick={() => handleRowClick(row)}>
+                  {headers.map((h) => {
+                    const cellValue = row[h];
+                    const isEmpty = cellValue === null || cellValue === undefined || cellValue === '';
 
-                  const displayValue = isEmpty
-                    ? null
-                    : typeof cellValue === 'number' && !NON_NUMERIC_COLUMNS.has(h)
-                      ? cellValue.toLocaleString(undefined, { maximumFractionDigits: 3 })
-                      : cellValue;
+                    const displayValue = isEmpty
+                      ? null
+                      : typeof cellValue === 'number' && !NON_NUMERIC_COLUMNS.has(h)
+                        ? cellValue.toLocaleString(undefined, { maximumFractionDigits: 3 })
+                        : cellValue;
 
-                  return (
-                    <td
-                      key={h}
-                      style={isEmpty ? { ...styles.td, ...styles.tdEmpty } : styles.td}
-                      title={isEmpty ? undefined : String(cellValue)}
-                    >
-                      {isEmpty ? <span style={styles.emptyCell}>—</span> : displayValue}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+                    return (
+                      <td
+                        key={h}
+                        style={isEmpty ? { ...styles.td, ...styles.tdEmpty } : styles.td}
+                        title={isEmpty ? undefined : String(cellValue)}
+                      >
+                        {isEmpty ? <span style={styles.emptyCell}>—</span> : displayValue}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         {data.length === 0 && (
@@ -155,8 +176,10 @@ const styles = {
   },
   trEven: { backgroundColor: '#fff' },
   trOdd: { backgroundColor: '#fafbfc' },
+  trSelected: { backgroundColor: '#eff6ff', outline: '1.5px solid #1d4ed8', outlineOffset: '-1px' },
   tdEmpty: { color: '#bbb' },
   emptyCell: { userSelect: 'none' },
+  hint: { color: '#94a3b8', fontSize: '12px' },
   noData: {
     padding: '20px',
     textAlign: 'center',

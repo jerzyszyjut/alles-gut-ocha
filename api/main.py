@@ -455,3 +455,89 @@ def post_chat(request: ChatRequest):
 def get_chat_defaults() -> dict[str, Any]:
     """Return the default ranking parameter values used when none are supplied."""
     return DEFAULT_PARAMS
+
+
+# ── Counterfactual endpoint ───────────────────────────────────────────────────
+
+class CounterfactualResponse(BaseModel):
+    country_code: str
+    country_name: str
+    cluster: str
+    requirements_usd: Optional[float]
+    current_funding_usd: Optional[float]
+    additional_funding: float
+    current_coverage: float
+    new_coverage: float
+    current_neglect_index: float
+    new_neglect_index: float
+    current_rank: int
+    new_rank: int
+    total_in_cluster: int
+
+
+@app.get("/counterfactual", response_model=CounterfactualResponse, summary="Counterfactual funding scenario")
+def get_counterfactual(
+    country_code: str = Query(..., description="ISO-3 country code"),
+    cluster: str = Query(..., description="Humanitarian cluster name"),
+    additional_funding: float = Query(0, ge=0, description="Hypothetical additional funding in USD"),
+    severity_weight: float = Query(0.6, ge=0, le=1),
+    funding_gap_weight: float = Query(0.4, ge=0, le=1),
+    need_weight: float = Query(0.5, ge=0, le=1),
+    ipc_weight: float = Query(0.4, ge=0, le=1),
+    events_weight: float = Query(0.1, ge=0, le=1),
+):
+    """Recompute neglect index and within-cluster rank after hypothetically adding funds."""
+    df = aggregate_by_country_cluster(_df_base.copy())
+
+    mask = (df['countryCode'] == country_code) & (df['cluster'] == cluster)
+    if not mask.any():
+        raise HTTPException(status_code=404, detail=f"No entry for {country_code}/{cluster}")
+
+    score_kwargs = dict(
+        severity_weight=severity_weight,
+        funding_gap_weight=funding_gap_weight,
+        need_weight=need_weight,
+        ipc_weight=ipc_weight,
+        events_weight=events_weight,
+        n_bootstrap=0,
+    )
+
+    scored = compute_scores(df, **score_kwargs)
+    target = scored[mask].iloc[0]
+
+    cluster_ranked = scored[scored['cluster'] == cluster].sort_values('neglect_index', ascending=False)
+    codes_list = cluster_ranked['countryCode'].tolist()
+    current_rank = codes_list.index(country_code) + 1 if country_code in codes_list else 1
+    total_in_cluster = len(cluster_ranked)
+
+    df_adj = df.copy()
+    idx = df_adj[mask].index[0]
+    raw = df_adj.loc[idx, 'funding_cluster_specific']
+    orig_funding = 0.0 if pd.isna(raw) else float(raw)
+    df_adj.loc[idx, 'funding_cluster_specific'] = orig_funding + additional_funding
+
+    scored_adj = compute_scores(df_adj, **score_kwargs)
+    target_adj = scored_adj[mask].iloc[0]
+
+    cluster_ranked_adj = scored_adj[scored_adj['cluster'] == cluster].sort_values('neglect_index', ascending=False)
+    codes_adj = cluster_ranked_adj['countryCode'].tolist()
+    new_rank = codes_adj.index(country_code) + 1 if country_code in codes_adj else 1
+
+    def _opt(v):
+        return None if pd.isna(v) else float(v)
+
+    return CounterfactualResponse(
+        country_code=country_code,
+        country_name=iso3_to_name(country_code),
+        cluster=cluster,
+        requirements_usd=_opt(target.get('requirements_cluster_specific')),
+        current_funding_usd=_opt(target.get('funding_cluster_specific')),
+        additional_funding=additional_funding,
+        current_coverage=float(target['coverage']),
+        new_coverage=float(target_adj['coverage']),
+        current_neglect_index=float(target['neglect_index']),
+        new_neglect_index=float(target_adj['neglect_index']),
+        current_rank=current_rank,
+        new_rank=new_rank,
+        total_in_cluster=total_in_cluster,
+    )
