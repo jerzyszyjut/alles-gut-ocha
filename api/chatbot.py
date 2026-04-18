@@ -7,11 +7,17 @@ from typing import Any
 
 import anthropic
 import pandas as pd
+from pathlib import Path
 
 from api.scorer import compute_scores, iso3_to_name
 
 # ── Static system prompt ──────────────────────────────────────────────────────
 # Cached at the Anthropic level — changes here invalidate the cache.
+
+_SCORER_PATH = Path(__file__).parent / "scorer.py"
+_SCORER_CODE = ""
+if _SCORER_PATH.exists():
+    _SCORER_CODE = _SCORER_PATH.read_text(encoding="utf-8")
 
 _METHODOLOGY = """
 ## Neglect Index — Full Methodology
@@ -117,7 +123,13 @@ _SYSTEM_STATIC = (
     "but do not reprint the full dataset.\n"
     "- Never output sections titled '### New top 5', '### What changed', "
     "'### Parameters updated', or any table that mirrors tool output.\n\n"
-    + _METHODOLOGY
+    + _METHODOLOGY +
+    "\n\n## Scorer Implementation (`scorer.py`)\n"
+    "Below is the exact Python code used to calculate the indices. Reference this if the user "
+    "asks highly technical questions about NumPy normalizations, bootstrapping, or NaN handling:\n\n"
+    "```python\n"
+    f"{_SCORER_CODE}\n"
+    "```\n"
 )
 
 # ── Tool definitions ──────────────────────────────────────────────────────────
