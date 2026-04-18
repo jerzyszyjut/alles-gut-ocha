@@ -64,6 +64,9 @@ function App() {
       const c = byCountry[row.countryCode];
       const pin = row.people_in_need || 0;
       c.num_clusters += 1;
+      if (row.country_total_pin && !c._country_total_pin) {
+        c._country_total_pin = row.country_total_pin;
+      }
       c._pin += pin;
       c._neglect_w += (row.neglect_index || 0) * pin;
       if (row.ipc_severity_score != null) {
@@ -80,7 +83,7 @@ function App() {
       countryCode: c.countryCode,
       countryName: c.countryName,
       num_clusters: c.num_clusters,
-      people_in_need: c._pin,
+      people_in_need: c._country_total_pin || c._pin,
       neglect_index: c._pin > 0 ? +(c._neglect_w / c._pin).toFixed(4) : 0,
       ipc_severity_score: c._ipc_pin > 0 ? +(c._ipc_w / c._ipc_pin).toFixed(3) : null,
       priority_label: c.priority_label,

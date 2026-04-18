@@ -66,6 +66,7 @@ class CrisisRow(BaseModel):
     countryName: str
     cluster: str
     people_in_need: float
+    country_total_pin: Optional[float]  # deduplicated ALL-cluster country total from HNO data
     requirements_usd: Optional[float]
     funding_usd: Optional[float]
     coverage: float
@@ -130,6 +131,7 @@ def _row_to_model(row: pd.Series, critical: float, high: float) -> CrisisRow:
         countryName=iso3_to_name(row['countryCode']),
         cluster=row['cluster'],
         people_in_need=float(row['People_In_Need']),
+        country_total_pin=_opt(row.get('country_total_pin')),
         requirements_usd=_opt(row.get('requirements_cluster_specific')),
         funding_usd=_opt(row.get('funding_cluster_specific')),
         coverage=float(row['coverage']),

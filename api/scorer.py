@@ -88,7 +88,7 @@ def _aggregate_needs_year(year: str) -> pd.DataFrame:
     df_clean = df[df['Admin 1 PCode'].isna() & df['Category'].isna()]
     df_pivot = pd.pivot_table(
         df_clean, values='In Need', index='Country ISO3',
-        columns='Cluster', aggfunc='sum', fill_value=0,
+        columns='Cluster', aggfunc='max', fill_value=0,
     ).reset_index()
     cluster_cols = [c for c in df_pivot.columns if c != 'Country ISO3']
     df_pivot = df_pivot.rename(columns={c: f"In Need - {c}" for c in cluster_cols})
@@ -114,30 +114,48 @@ def _aggregate_needs_year(year: str) -> pd.DataFrame:
         "Country ISO3": "countryCode",
     }
     df_pivot.rename(columns=cluster_mapping, inplace=True)
+
+    # Pull out the deduplicated country total before melting so it doesn't
+    # become a fake cluster row and pollute downstream joins.
+    country_total = None
+    if 'Total In Need' in df_pivot.columns:
+        country_total = df_pivot[['countryCode', 'Total In Need']].rename(
+            columns={'Total In Need': 'country_total_pin'}
+        )
+
     df_melted = pd.melt(
         df_pivot,
         id_vars=['countryCode'],
-        value_vars=[c for c in df_pivot.columns if c != 'countryCode'],
+        value_vars=[c for c in df_pivot.columns if c not in ('countryCode', 'Total In Need')],
         var_name='cluster',
         value_name='People_In_Need',
     )
     df_melted["year"] = int(year)
+
+    if country_total is not None:
+        df_melted = df_melted.merge(country_total, on='countryCode', how='left')
+
     return df_melted
 
 
 def aggregate_by_country_cluster(df: pd.DataFrame) -> pd.DataFrame:
     """Collapse a multi-year dataframe to one row per (countryCode, cluster).
 
-    All numeric columns (requirements, funding, people in need, IPC phases,
-    conflict events) are averaged across the years present in df.
+    Numeric columns are averaged across years; country_total_pin (the
+    deduplicated ALL-cluster country total) is preserved via max since it is
+    the same value for every cluster row belonging to the same country.
     The year column is dropped entirely.
     """
     group_keys = ['countryCode', 'cluster']
-    numeric_cols = [
+    avg_cols = [
         c for c in df.select_dtypes(include='number').columns
-        if c != 'year'
+        if c not in ('year', 'country_total_pin')
     ]
-    return df.groupby(group_keys, as_index=False)[numeric_cols].mean()
+    result = df.groupby(group_keys, as_index=False)[avg_cols].mean()
+    if 'country_total_pin' in df.columns:
+        totals = df.groupby(group_keys, as_index=False)['country_total_pin'].max()
+        result = result.merge(totals, on=group_keys, how='left')
+    return result
 
 
 def create_aggregate_base() -> pd.DataFrame:

@@ -332,7 +332,7 @@ def aggregate_needs(year):
         values='In Need', 
         index='Country ISO3', 
         columns='Cluster', 
-        aggfunc='sum', 
+        aggfunc='max', 
         fill_value=0
     ).reset_index()
 
