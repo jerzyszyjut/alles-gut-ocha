@@ -9,13 +9,7 @@ function App() {
     <div style={styles.appContainer}>
       {/* LEFT SIDE: Map (Top) and CSV (Bottom) */}
       <div style={styles.mainContent}>
-        
-        {/* Placeholder for the Map component */}
-        <div style={styles.mapPlaceholder}>
-          <div style={styles.mapText}>
-            <WorldMap />
-          </div>
-        </div>
+        <WorldMap />
 
         {/* CSV Viewer at the bottom */}
         <div style={styles.csvSection}>
