@@ -9,7 +9,7 @@ import anthropic
 import pandas as pd
 from pathlib import Path
 
-from api.scorer import compute_scores, iso3_to_name
+from api.scorer import aggregate_by_country_cluster, compute_scores, iso3_to_name
 
 # ── Static system prompt ──────────────────────────────────────────────────────
 # Cached at the Anthropic level — changes here invalidate the cache.
@@ -79,7 +79,7 @@ low      → neglect_index < 0.4
 - ACLED: number of events targeting civilians per country/year
 
 ### Available data
-Years: 2024, 2025
+Years: 2024, 2025 (use last_years=1 for latest year only, last_years=2 for both)
 Clusters: Agriculture · Camp Coordination / Management · Coordination and support services ·
   Early Recovery · Education · Emergency Shelter and NFI · Food Security · Health ·
   Logistics · Multi-sector · Nutrition · Protection · Protection - Child Protection ·
@@ -95,7 +95,7 @@ _SYSTEM_STATIC = (
     "## Your responsibilities\n"
     "1. **Explain rankings**: Why is country X ranked high? Cite exact metric values "
     "(neglect_index, coverage %, people in need, IPC phase, events rank).\n"
-    "2. **Explore the data**: Help users filter by country, sector, year and adjust "
+    "2. **Explore the data**: Help users filter by country, sector, or recency (last_years) and adjust "
     "scoring weights to reflect their priorities.\n"
     "3. **Compare crises**: Compare across dimensions — need vs funding vs food insecurity "
     "vs conflict.\n"
@@ -135,9 +135,9 @@ _SYSTEM_STATIC = (
 # ── Tool definitions ──────────────────────────────────────────────────────────
 
 _FILTER_PROPS: dict[str, Any] = {
-    "year": {
-        "type": "array", "items": {"type": "integer"},
-        "description": "Filter by year(s). Available: 2024, 2025. Omit for all years.",
+    "last_years": {
+        "type": "integer",
+        "description": "Include only the N most recent years of data (e.g. 1 = latest year only, 2 = last two years). Omit for all years.",
     },
     "cluster": {
         "type": "array", "items": {"type": "string"},
@@ -232,7 +232,7 @@ TOOLS: list[dict[str, Any]] = [
         "name": "update_ranking_parameters",
         "description": (
             "Update the ranking parameters shown in the frontend visualisation. "
-            "Call this when the user asks to: focus on specific countries/clusters/years, "
+            "Call this when the user asks to: focus on specific countries/clusters, restrict to recent years (last_years), "
             "change scoring weights (e.g. 'prioritise food insecurity'), apply filters "
             "(e.g. 'only show crises below 30% funded'), or adjust threshold labels. "
             "Specify ONLY the parameters you want to change — everything else keeps its "
@@ -252,7 +252,7 @@ TOOLS: list[dict[str, Any]] = [
 # ── Default parameters ────────────────────────────────────────────────────────
 
 DEFAULT_PARAMS: dict[str, Any] = {
-    "year": None,
+    "last_years": None,
     "cluster": None,
     "country": None,
     "min_people_in_need": None,
@@ -283,8 +283,9 @@ def _opt(v: Any) -> float | None:
 
 
 def _apply_filters(df: pd.DataFrame, params: dict) -> pd.DataFrame:
-    if params.get("year"):
-        df = df[df["year"].isin(params["year"])]
+    if params.get("last_years") is not None:
+        max_year = int(df["year"].max())
+        df = df[df["year"] >= max_year - params["last_years"] + 1]
     if params.get("cluster"):
         df = df[df["cluster"].isin(params["cluster"])]
     if params.get("country"):
@@ -298,6 +299,8 @@ def _execute_query(params: dict, df_base: pd.DataFrame) -> list[dict]:
     df = _apply_filters(df_base.copy(), params)
     if df.empty:
         return []
+
+    df = aggregate_by_country_cluster(df)
 
     df = compute_scores(
         df,
@@ -325,7 +328,6 @@ def _execute_query(params: dict, df_base: pd.DataFrame) -> list[dict]:
         rows.append({
             "countryCode": row["countryCode"],
             "countryName": iso3_to_name(row["countryCode"]),
-            "year": int(row["year"]),
             "cluster": row["cluster"],
             "people_in_need": float(row["People_In_Need"]),
             "requirements_usd": _opt(row.get("requirements_cluster_specific")),

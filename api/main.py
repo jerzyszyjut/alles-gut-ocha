@@ -5,17 +5,21 @@ import os
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Optional
 
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from sklearn.cluster import KMeans
+from sklearn.manifold import TSNE
+from sklearn.preprocessing import StandardScaler
 
 load_dotenv()
 
 from api.chatbot import DEFAULT_PARAMS
 from api.chatbot import chat as chatbot_chat
-from api.scorer import compute_scores, create_aggregate_base, iso3_to_name
+from api.scorer import aggregate_by_country_cluster, compute_scores, create_aggregate_base, iso3_to_name
 
 _df_base: pd.DataFrame | None = None
 
@@ -49,7 +53,6 @@ app.add_middleware(
 class CrisisRow(BaseModel):
     countryCode: str
     countryName: str
-    year: int
     cluster: str
     people_in_need: float
     requirements_usd: Optional[float]
@@ -83,7 +86,7 @@ class MetadataResponse(BaseModel):
 _VALID_SORT_FIELDS = {
     "neglect_index", "need_rank", "coverage_rank", "coverage",
     "people_in_need", "ipc_severity_score", "uncertainty",
-    "countryCode", "cluster", "year",
+    "countryCode", "cluster",
 }
 
 
@@ -104,7 +107,6 @@ def _row_to_model(row: pd.Series, critical: float, high: float) -> CrisisRow:
     return CrisisRow(
         countryCode=row['countryCode'],
         countryName=iso3_to_name(row['countryCode']),
-        year=int(row['year']),
         cluster=row['cluster'],
         people_in_need=float(row['People_In_Need']),
         requirements_usd=_opt(row.get('requirements_cluster_specific')),
@@ -137,8 +139,8 @@ def get_metadata():
 @app.get("/ranking", response_model=RankingResponse, summary="Ranked neglect index")
 def get_ranking(
     # ── Filters ───────────────────────────────────────────────────────────────
-    year: Annotated[
-        Optional[list[int]], Query(description="Filter by year(s), e.g. year=2024&year=2025")
+    last_years: Annotated[
+        Optional[int], Query(ge=1, description="Include only the N most recent years of data (e.g. 1 = latest year only)")
     ] = None,
     cluster: Annotated[
         Optional[list[str]], Query(description="Filter by humanitarian cluster name(s)")
@@ -203,12 +205,17 @@ def get_ranking(
     df = _df_base.copy()
 
     # Apply filters
-    if year:
-        df = df[df['year'].isin(year)]
+    if last_years is not None:
+        max_year = int(df['year'].max())
+        df = df[df['year'] >= max_year - last_years + 1]
     if cluster:
         df = df[df['cluster'].isin(cluster)]
     if country:
         df = df[df['countryCode'].isin(country)]
+
+    # Aggregate across years into one row per (country, cluster)
+    df = aggregate_by_country_cluster(df)
+
     if min_people_in_need is not None:
         df = df[df['People_In_Need'] >= min_people_in_need]
 
@@ -244,6 +251,90 @@ def get_ranking(
 
     results = [_row_to_model(row, critical_threshold, high_threshold) for _, row in page.iterrows()]
     return RankingResponse(total_matches=total, returned=len(results), offset=offset, results=results)
+
+
+@app.get("/tsne", summary="t-SNE projection of crisis data with outlier flags")
+def get_tsne(
+    last_years: Annotated[Optional[int], Query(ge=1)] = None,
+    cluster: Annotated[Optional[list[str]], Query()] = None,
+    country: Annotated[Optional[list[str]], Query()] = None,
+    severity_weight: float = Query(0.6, ge=0, le=1),
+    funding_gap_weight: float = Query(0.4, ge=0, le=1),
+    need_weight: float = Query(0.5, ge=0, le=1),
+    ipc_weight: float = Query(0.4, ge=0, le=1),
+    events_weight: float = Query(0.1, ge=0, le=1),
+    perplexity: int = Query(30, ge=5, le=100),
+):
+    df = _df_base.copy()
+
+    if last_years is not None:
+        max_year = int(df['year'].max())
+        df = df[df['year'] >= max_year - last_years + 1]
+    if cluster:
+        df = df[df['cluster'].isin(cluster)]
+    if country:
+        df = df[df['countryCode'].isin(country)]
+
+    df = aggregate_by_country_cluster(df)
+
+    if len(df) < 5:
+        return []
+
+    df = compute_scores(
+        df,
+        severity_weight=severity_weight,
+        funding_gap_weight=funding_gap_weight,
+        need_weight=need_weight,
+        ipc_weight=ipc_weight,
+        events_weight=events_weight,
+        n_bootstrap=0,
+    )
+
+    feature_cols = ['neglect_index', 'coverage', 'need_rank', 'coverage_rank']
+    if 'ipc_severity_score' in df.columns:
+        feature_cols.append('ipc_severity_score')
+
+    X = df[feature_cols].fillna(df[feature_cols].mean())
+    X_scaled = StandardScaler().fit_transform(X)
+
+    perp = min(perplexity, len(df) - 1)
+    coords = TSNE(n_components=2, perplexity=perp, random_state=42, max_iter=1000).fit_transform(X_scaled)
+
+    df = df.copy()
+    df['_x'] = coords[:, 0]
+    df['_y'] = coords[:, 1]
+
+    # KMeans on t-SNE coordinates to find support clusters
+    n_clusters = max(2, min(6, len(df) // 5))
+    km = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    df['kmeans_cluster'] = km.fit_predict(coords)
+
+    # Outlier = distance to own KMeans centroid > mean + 1.5 * std (within each cluster)
+    df['is_outlier'] = False
+    for cid, grp in df.groupby('kmeans_cluster'):
+        if len(grp) < 2:
+            continue
+        pts = coords[grp.index]
+        centroid = km.cluster_centers_[cid]
+        dists = np.linalg.norm(pts - centroid, axis=1)
+        threshold = dists.mean() + 1.5 * dists.std()
+        df.loc[grp.index[dists > threshold], 'is_outlier'] = True
+
+    return [
+        {
+            'countryCode': row['countryCode'],
+            'countryName': iso3_to_name(row['countryCode']),
+            'cluster': row['cluster'],
+            'kmeans_cluster': int(row['kmeans_cluster']),
+            'x': round(float(row['_x']), 3),
+            'y': round(float(row['_y']), 3),
+            'neglect_index': round(float(row['neglect_index']), 4),
+            'coverage': round(float(row['coverage']), 4),
+            'people_in_need': float(row['People_In_Need']),
+            'is_outlier': bool(row['is_outlier']),
+        }
+        for _, row in df.iterrows()
+    ]
 
 
 @app.get(

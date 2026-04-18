@@ -4,7 +4,6 @@ const HIDDEN_COLUMNS = new Set(['countryCode']);
 
 const COLUMN_LABELS = {
   countryName: 'Country',
-  year: 'Year',
   cluster: 'Cluster',
   people_in_need: 'People in Need',
   requirements_usd: 'Requirements (USD)',
@@ -21,7 +20,7 @@ const COLUMN_LABELS = {
 const formatLabel = (key) =>
   COLUMN_LABELS[key] ?? key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
-const NON_NUMERIC_COLUMNS = new Set(['year', 'countryCode', 'countryName', 'cluster', 'priority_label']);
+const NON_NUMERIC_COLUMNS = new Set(['countryCode', 'countryName', 'cluster', 'priority_label']);
 
 const CsvViewer = ({ data = [], totalCount = 0, filter, setFilter }) => {
   let headers;

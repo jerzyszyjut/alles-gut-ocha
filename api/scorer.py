@@ -125,6 +125,21 @@ def _aggregate_needs_year(year: str) -> pd.DataFrame:
     return df_melted
 
 
+def aggregate_by_country_cluster(df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse a multi-year dataframe to one row per (countryCode, cluster).
+
+    All numeric columns (requirements, funding, people in need, IPC phases,
+    conflict events) are averaged across the years present in df.
+    The year column is dropped entirely.
+    """
+    group_keys = ['countryCode', 'cluster']
+    numeric_cols = [
+        c for c in df.select_dtypes(include='number').columns
+        if c != 'year'
+    ]
+    return df.groupby(group_keys, as_index=False)[numeric_cols].mean()
+
+
 def create_aggregate_base() -> pd.DataFrame:
     df_funding = pd.read_csv(DATA_DIR / "fts_requirements_funding_global.csv")
     df_funding_cluster = pd.read_csv(
@@ -227,10 +242,13 @@ def _neglect_score_on_sample(
         has_ipc = np.zeros(n, dtype=bool)
 
     if 'civilian_events' in sample.columns:
-        year_codes = pd.Categorical(sample['year'].to_numpy()).codes
-        combined_codes = cluster_codes * (year_codes.max() + 1) + year_codes
+        if 'year' in sample.columns:
+            year_codes = pd.Categorical(sample['year'].to_numpy()).codes
+            event_groups = cluster_codes * (year_codes.max() + 1) + year_codes
+        else:
+            event_groups = cluster_codes
         events_rank = _pct_rank_within_groups(
-            sample['civilian_events'].to_numpy(dtype=float), combined_codes
+            sample['civilian_events'].to_numpy(dtype=float), event_groups
         )
     else:
         events_rank = np.full(n, np.nan)
