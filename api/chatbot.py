@@ -105,6 +105,18 @@ _SYSTEM_STATIC = (
     "- If a user asks 'why is X ranked high', query X's data first, then explain "
     "each contributing metric.\n"
     "- Keep responses concise and decision-focused — this is a triage tool.\n\n"
+    "## Output format rules — CRITICAL\n"
+    "The frontend displays structured data separately from your text reply. "
+    "Your text reply must NEVER duplicate data that is already delivered via tools:\n"
+    "- When you call `update_ranking_parameters`, do NOT include a markdown table of "
+    "results and do NOT list the changed parameters with before/after values. "
+    "The frontend renders the updated ranking automatically. "
+    "Just write 1–3 sentences explaining *why* the change matters analytically.\n"
+    "- When you call `query_ranking`, do NOT reproduce the results as a markdown table. "
+    "Reference specific values inline (e.g. 'Sudan Food Security has 0.3% coverage') "
+    "but do not reprint the full dataset.\n"
+    "- Never output sections titled '### New top 5', '### What changed', "
+    "'### Parameters updated', or any table that mirrors tool output.\n\n"
     + _METHODOLOGY
 )
 
