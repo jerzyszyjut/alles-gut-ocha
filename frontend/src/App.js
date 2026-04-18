@@ -14,7 +14,7 @@ function App() {
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
-        const response = await fetch('http://localhost:8000/ranking?limit=25');
+        const response = await fetch('http://localhost:8000/ranking');
         if (!response.ok) throw new Error("Failed to fetch");
         const data = await response.json();
         setCsvData(data.results || []);
