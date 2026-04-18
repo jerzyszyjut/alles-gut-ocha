@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import Chat from './Chat';
 
 // --- HELPER: Fuzzy matching for key detection ---
 const fuzzyKeyMatch = (text, target) => {
@@ -8,7 +9,7 @@ const fuzzyKeyMatch = (text, target) => {
   return str.includes(t) || t.includes(str) || (str.includes('food') && t === 'ipc_weight');
 };
 
-const Weights = ({ messages = [] }) => {
+const Weights = ({ messages = [], setMessages, currentParams, onUpdateState }) => {
   
   // Logic: Scan messages from latest to oldest to find a weight table
   const detectedWeights = useMemo(() => {
@@ -87,6 +88,15 @@ const Weights = ({ messages = [] }) => {
         <StatBar label="Food Security (IPC)" value={data.ipc_weight} total={subTotal} color="#6f42c1" />
         <StatBar label="Conflict Events" value={data.events_weight} total={subTotal} color="#d73a49" />
       </div>
+
+      <div style={styles.chatSection}>
+        <Chat
+          messages={messages}
+          setMessages={setMessages}
+          currentParams={currentParams}
+          onUpdateState={onUpdateState}
+        />
+      </div>
     </div>
   );
 };
@@ -119,7 +129,20 @@ const styles = {
     borderRadius: '12px',
     border: '1px solid #e1e4e8',
     fontFamily: 'sans-serif',
-    maxWidth: '400px'
+    display: 'flex',
+    flexDirection: 'column',
+    height: '100%',
+    boxSizing: 'border-box',
+    overflow: 'hidden',
+  },
+  chatSection: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    borderTop: '1px solid #e1e4e8',
+    marginTop: '8px',
+    paddingTop: '8px',
+    overflow: 'hidden',
   },
   headerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
   header: { margin: 0, fontSize: '18px', color: '#24292e' },

@@ -113,11 +113,7 @@ const renderMarkdown = (text) => {
   return elements;
 };
 
-const Chat = ({ currentParams, onUpdateState }) => {
-  const [messages, setMessages] = useState([
-    // ADDED isGreeting flag so we know not to send this to the backend
-    { role: 'assistant', content: 'Hello! I am your humanitarian crisis analyst. I can explain the neglect index, adjust weights, or filter the data. How can I help?', isGreeting: true }
-  ]);
+const Chat = ({ currentParams, onUpdateState, messages, setMessages }) => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   
@@ -241,8 +237,6 @@ const styles = {
     flexDirection: 'column',
     width: '100%',
     height: '100%',
-    border: '1px solid #ccc',
-    borderRadius: '8px',
     overflow: 'hidden',
     fontFamily: 'sans-serif',
     backgroundColor: '#fff'

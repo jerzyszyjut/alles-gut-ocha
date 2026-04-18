@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useEffect } from "react";
-import Chat from "./Chat";
 import CsvViewer from "./CsvViewer";
 import WorldMap from "./WorldMap";
 import Weights from "./Weights";
@@ -11,6 +10,9 @@ function App() {
   const [totalMatches, setTotalMatches] = useState(0);
   const [filterText, setFilterText] = useState("");
   const [topView, setTopView] = useState("map");
+  const [messages, setMessages] = useState([
+    { role: 'assistant', content: 'Hello! I am your humanitarian crisis analyst. I can explain the neglect index, adjust weights, or filter the data. How can I help?', isGreeting: true }
+  ]);
 
   // Fetch data from your FastAPI/Node backend
   useEffect(() => {
@@ -95,10 +97,11 @@ function App() {
         </div>
       </div>
 
-      {/* RIGHT: Chat Sidebar */}
+      {/* RIGHT: Sidebar */}
       <div style={styles.sidebar}>
-        <Weights />
-        <Chat
+        <Weights
+          messages={messages}
+          setMessages={setMessages}
           currentParams={currentParams}
           onUpdateState={handleStateUpdateFromChat}
         />
@@ -122,25 +125,6 @@ const styles = {
     flex: 1,
     height: "100%",
   },
-  // --- UPDATED SIDEBAR & CHILDREN ---
-  sidebar: {
-    width: "400px",
-    height: "100vh",
-    padding: "10px",
-    display: "flex", // Turn sidebar into flexbox
-    flexDirection: "column", // Stack Weights and Chat vertically
-    gap: "10px", // Adds space between the two components
-    boxSizing: "border-box", // Ensures padding doesn't break the 100vh
-  },
-  weightsWrapper: {
-    flexShrink: 0, // Prevents Weights from squishing
-  },
-  chatWrapper: {
-    flex: 1, // Forces Chat to take up all remaining space
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden", // Important so the Chat's internal scroll works
-  },
   mapSection: {
     flex: 1,
     display: "flex",
@@ -162,6 +146,8 @@ const styles = {
     height: "100vh",
     padding: "10px",
     display: "flex",
+    flexDirection: "column",
+    boxSizing: "border-box",
   },
   viewToggle: {
     position: "absolute",
