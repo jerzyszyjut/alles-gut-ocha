@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import Chat from './Chat';
 
-
 const WEIGHT_KEYS = ['severity_weight', 'funding_gap_weight', 'need_weight', 'ipc_weight', 'events_weight'];
 
 const Weights = ({ messages = [], setMessages, currentParams, onUpdateState }) => {
@@ -45,11 +44,6 @@ const Weights = ({ messages = [], setMessages, currentParams, onUpdateState }) =
         </span>
       </div>
 
-      <p style={styles.description}>
-        The index is currently reading weights from the conversation history. 
-        To change these, tell the AI: <em>"Update the severity weight to 0.8"</em>.
-      </p>
-
       {/* READ-ONLY DISPLAY */}
       <div style={styles.section}>
         <div style={styles.sectionTitle}>Macro Weights</div>
@@ -76,7 +70,7 @@ const Weights = ({ messages = [], setMessages, currentParams, onUpdateState }) =
   );
 };
 
-// Purely visual component since user cannot edit
+// Ultra-compact StatBar (removed raw value text)
 const StatBar = ({ label, value, total, color }) => {
   const percentage = ((value / total) * 100).toFixed(0);
   return (
@@ -92,14 +86,13 @@ const StatBar = ({ label, value, total, color }) => {
           backgroundColor: color
         }} />
       </div>
-      <div style={styles.rawVal}>Relative score: {value.toFixed(2)}</div>
     </div>
   );
 };
 
 const styles = {
   container: {
-    padding: '20px',
+    padding: '12px', // Reduced from 20px
     backgroundColor: '#fff',
     borderRadius: '12px',
     border: '1px solid #e1e4e8',
@@ -115,21 +108,19 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     borderTop: '1px solid #e1e4e8',
-    marginTop: '8px',
+    marginTop: '4px', // Reduced
     paddingTop: '8px',
     overflow: 'hidden',
   },
-  headerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
-  header: { margin: 0, fontSize: '18px', color: '#24292e' },
-  statusBadge: { fontSize: '10px', padding: '3px 8px', borderRadius: '10px', fontWeight: 'bold', textTransform: 'uppercase' },
-  description: { fontSize: '12px', color: '#586069', marginBottom: '20px', fontStyle: 'italic' },
-  section: { marginBottom: '20px' },
-  sectionTitle: { fontSize: '12px', fontWeight: 'bold', color: '#888', textTransform: 'uppercase', marginBottom: '10px', letterSpacing: '0.5px' },
-  statRow: { marginBottom: '12px' },
-  statLabel: { display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' },
-  barBg: { height: '6px', backgroundColor: '#f0f0f0', borderRadius: '3px', overflow: 'hidden' },
-  barFill: { height: '100%', transition: 'width 0.5s ease-out' },
-  rawVal: { fontSize: '10px', color: '#aaa', marginTop: '2px', textAlign: 'right' }
+  headerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }, // Reduced
+  header: { margin: 0, fontSize: '14px', color: '#24292e' }, // Reduced from 18px
+  statusBadge: { fontSize: '9px', padding: '2px 6px', borderRadius: '8px', fontWeight: 'bold', textTransform: 'uppercase' },
+  section: { marginBottom: '8px' }, // Reduced from 20px
+  sectionTitle: { fontSize: '10px', fontWeight: 'bold', color: '#888', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px' },
+  statRow: { marginBottom: '6px' }, // Reduced from 12px
+  statLabel: { display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginBottom: '2px' }, // Reduced font and margin
+  barBg: { height: '4px', backgroundColor: '#f0f0f0', borderRadius: '2px', overflow: 'hidden' }, // Thinner bars
+  barFill: { height: '100%', transition: 'width 0.5s ease-out' }
 };
 
 export default Weights;
