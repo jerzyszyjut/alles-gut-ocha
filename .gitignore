@@ -13,3 +13,4 @@ data/*.csv
 *.html
 *.png
 *.csv
+*.xlsx
