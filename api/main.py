@@ -1,14 +1,20 @@
 """FastAPI backend for humanitarian crisis neglect analysis."""
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 import pandas as pd
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+load_dotenv()
+
+from api.chatbot import DEFAULT_PARAMS
+from api.chatbot import chat as chatbot_chat
 from api.scorer import compute_scores, create_aggregate_base, iso3_to_name
 
 _df_base: pd.DataFrame | None = None
@@ -286,3 +292,75 @@ def get_crisis(
             detail=f"No entry for {country_code}/{year}/{cluster}",
         )
     return _row_to_model(row.iloc[0], critical_threshold, high_threshold)
+
+
+# ── Chat endpoint ─────────────────────────────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
+
+class ChatRequest(BaseModel):
+    """Chat turn request.
+
+    messages: full conversation history (alternating user/assistant).
+    current_params: the ranking parameters currently active in the frontend.
+      Only non-None values override the defaults. Omit keys you haven't changed.
+    """
+    messages: list[ChatMessage]
+    current_params: dict[str, Any] = {}
+
+
+class ChatResponse(BaseModel):
+    """Chat turn response.
+
+    reply: the assistant's text response to display in the chat UI.
+    parameter_update: present when Claude changed the ranking parameters.
+      Apply these to the frontend's ranking view — this is the complete merged
+      parameter dict (not a diff), ready to pass directly to GET /ranking.
+    ranking_snapshot: the top results computed with the updated parameters.
+      Use this to immediately refresh the visualisation without a second request.
+    """
+    reply: str
+    parameter_update: Optional[dict[str, Any]] = None
+    ranking_snapshot: Optional[list[dict[str, Any]]] = None
+
+
+@app.post("/chat", response_model=ChatResponse, summary="Chat with the crisis analyst")
+def post_chat(request: ChatRequest):
+    """Send a message to the Claude-powered analyst.
+
+    Claude can:
+    - Explain why countries/clusters rank high, citing exact metric values
+    - Compare crises across dimensions (need, funding, food insecurity, conflict)
+    - Change the ranking parameters shown in the frontend visualisation
+    - Adjust scoring weights to reflect different humanitarian priorities
+
+    When Claude changes parameters, `parameter_update` contains the full merged
+    parameter dict. Pass it to `GET /ranking` (or apply directly to the frontend
+    state) to update the visualisation. `ranking_snapshot` gives you the
+    pre-computed top results so you don't need a second request.
+    """
+    if not request.messages:
+        raise HTTPException(status_code=422, detail="messages must not be empty")
+    if request.messages[-1].role != "user":
+        raise HTTPException(status_code=422, detail="Last message must be from 'user'")
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY is not set. Add it to .env or the environment.",
+        )
+
+    api_messages = [{"role": m.role, "content": m.content} for m in request.messages]
+    try:
+        result = chatbot_chat(api_messages, request.current_params, _df_base)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Claude API error: {exc}") from exc
+    return ChatResponse(**result)
+
+
+@app.get("/chat/defaults", summary="Default ranking parameters")
+def get_chat_defaults() -> dict[str, Any]:
+    """Return the default ranking parameter values used when none are supplied."""
+    return DEFAULT_PARAMS
