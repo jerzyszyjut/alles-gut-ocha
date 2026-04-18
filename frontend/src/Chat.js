@@ -1,5 +1,67 @@
 import React, { useState, useRef, useEffect } from 'react';
 
+const renderMarkdown = (text) => {
+  const lines = text.split('\n');
+  const elements = [];
+  let i = 0;
+
+  const parseInline = (str) => {
+    const parts = [];
+    const re = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|__[^_]+__|_[^_]+_)/g;
+    let last = 0, m;
+    while ((m = re.exec(str)) !== null) {
+      if (m.index > last) parts.push(str.slice(last, m.index));
+      const tok = m[0];
+      if (tok.startsWith('`')) parts.push(<code key={m.index} style={styles.inlineCode}>{tok.slice(1,-1)}</code>);
+      else if (tok.startsWith('**') || tok.startsWith('__')) parts.push(<strong key={m.index}>{tok.slice(2,-2)}</strong>);
+      else parts.push(<em key={m.index}>{tok.slice(1,-1)}</em>);
+      last = m.index + tok.length;
+    }
+    if (last < str.length) parts.push(str.slice(last));
+    return parts;
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (line.startsWith('```')) {
+      const lang = line.slice(3).trim();
+      const codeLines = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith('```')) { codeLines.push(lines[i]); i++; }
+      elements.push(<pre key={i} style={styles.codeBlock}><code>{codeLines.join('\n')}</code></pre>);
+    } else if (/^#{1,6}\s/.test(line)) {
+      const level = line.match(/^(#+)/)[1].length;
+      const content = line.replace(/^#+\s/, '');
+      const Tag = `h${Math.min(level, 6)}`;
+      const fs = ['20px','18px','16px','15px','14px','14px'][level-1];
+      elements.push(<Tag key={i} style={{margin:'6px 0 2px',fontSize:fs}}>{parseInline(content)}</Tag>);
+    } else if (/^[-*+]\s/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[-*+]\s/.test(lines[i])) {
+        items.push(<li key={i}>{parseInline(lines[i].replace(/^[-*+]\s/,''))}</li>);
+        i++;
+      }
+      elements.push(<ul key={`ul-${i}`} style={{margin:'4px 0',paddingLeft:'18px'}}>{items}</ul>);
+      continue;
+    } else if (/^\d+\.\s/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s/.test(lines[i])) {
+        items.push(<li key={i}>{parseInline(lines[i].replace(/^\d+\.\s/,''))}</li>);
+        i++;
+      }
+      elements.push(<ol key={`ol-${i}`} style={{margin:'4px 0',paddingLeft:'18px'}}>{items}</ol>);
+      continue;
+    } else if (line.trim() === '') {
+      elements.push(<br key={i} />);
+    } else {
+      elements.push(<p key={i} style={{margin:'2px 0'}}>{parseInline(line)}</p>);
+    }
+    i++;
+  }
+  return elements;
+};
+
 const Chat = ({ currentParams, onUpdateState }) => {
   const [messages, setMessages] = useState([
     // ADDED isGreeting flag so we know not to send this to the backend
@@ -90,7 +152,7 @@ const Chat = ({ currentParams, onUpdateState }) => {
               backgroundColor: msg.role === 'user' ? '#007bff' : '#f1f1f1',
               color: msg.role === 'user' ? '#fff' : '#333'
             }}>
-              {msg.content}
+              {msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content}
             </div>
           </div>
         ))}
@@ -161,7 +223,7 @@ const styles = {
     lineHeight: '1.4',
     wordWrap: 'break-word',
     fontSize: '14px',
-    whiteSpace: 'pre-wrap'
+    whiteSpace: 'normal'
   },
   inputArea: {
     display: 'flex',
@@ -177,6 +239,23 @@ const styles = {
     outline: 'none',
     marginRight: '10px',
     fontSize: '14px'
+  },
+  inlineCode: {
+    backgroundColor: '#e8e8e8',
+    borderRadius: '3px',
+    padding: '1px 4px',
+    fontFamily: 'monospace',
+    fontSize: '13px'
+  },
+  codeBlock: {
+    backgroundColor: '#2d2d2d',
+    color: '#f8f8f2',
+    borderRadius: '6px',
+    padding: '10px 12px',
+    overflowX: 'auto',
+    fontSize: '13px',
+    fontFamily: 'monospace',
+    margin: '6px 0'
   },
   button: {
     padding: '10px 20px',
