@@ -16,3 +16,11 @@ data/*.csv
 *.xlsx
 frontend/node_modules
 .env
+*.fls
+*.log
+*.out
+*.pdf
+*.toc
+*.files
+*.fdb_latexmk
+*.aux

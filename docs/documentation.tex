@@ -1,0 +1,762 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{microtype}
+\usepackage{parskip}
+
+% Colours
+\definecolor{ocha-blue}{RGB}{0,114,188}
+\definecolor{code-bg}{RGB}{245,245,245}
+\definecolor{code-comment}{RGB}{100,100,100}
+\definecolor{critical-red}{RGB}{185,28,28}
+\definecolor{high-orange}{RGB}{180,83,9}
+
+% Hyperref setup
+\hypersetup{
+  colorlinks=true,
+  linkcolor=ocha-blue,
+  urlcolor=ocha-blue,
+  citecolor=ocha-blue,
+  pdftitle={Humanitarian Crisis Neglect Index - Technical Documentation},
+  pdfauthor={Alles GUT},
+}
+
+% Code listings
+\lstset{
+  backgroundcolor=\color{code-bg},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!50},
+  commentstyle=\color{code-comment},
+  keywordstyle=\color{ocha-blue}\bfseries,
+  stringstyle=\color{critical-red},
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=6pt,
+  xleftmargin=12pt,
+  tabsize=4,
+  showstringspaces=false,
+}
+
+\titleformat{\section}{\large\bfseries\color{ocha-blue}}{}{0em}{\thesection\quad}
+\titleformat{\subsection}{\normalsize\bfseries}{}{0em}{\thesubsection\quad}
+\titleformat{\subsubsection}{\normalsize\itshape\bfseries}{}{0em}{\thesubsubsection\quad}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\small\textcolor{ocha-blue}{\textbf{Humanitarian Crisis Neglect Index}}}
+\rhead{\small Technical Documentation}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\apiendpoint}[1]{\texttt{\textcolor{ocha-blue}{#1}}}
+\newcommand{\param}[1]{\texttt{\textit{#1}}}
+
+
+\begin{document}
+
+\begin{titlepage}
+  \centering
+  \vspace*{3cm}
+  {\Huge\bfseries\color{ocha-blue} Humanitarian Crisis Neglect Index \par}
+  \vspace{0.5cm}
+  {\Large Technical Documentation \par}
+  \vspace{0.8cm}
+  \rule{10cm}{0.5pt}\par
+  \vspace{0.8cm}
+  {\large\textit{Identifying Severe but Underfunded Humanitarian Crises} \par}
+  \vspace{2cm}
+  {\normalsize
+    \begin{tabular}{rl}
+      \textbf{Team}  & Alles GUT \\[4pt]
+      \textbf{Task} & Geo-Insight: Which Crises Are Most Overlooked? \\[4pt]
+      \textbf{Date}    & April 2026 \\[4pt]
+    \end{tabular}
+  \par}
+  \vfill
+\end{titlepage}
+
+% --- Table of contents -------------------------------------------------------
+\tableofcontents
+\newpage
+
+% -----------------------------------------------------------------------------
+\section{Introduction}
+% -----------------------------------------------------------------------------
+
+\subsection{Motivation}
+
+Not every humanitarian crisis receives funding proportional to its documented need.
+Some situations are severe, chronic, and well-documented---yet year after year they
+receive far less than their requested requirements.
+Others may be similarly dire but are acute or newly escalating, making them
+``structurally'' overlooked rather than recently neglected.
+
+The \textbf{Humanitarian Crisis Neglect Index (HCNI)} is a data-driven platform that
+surfaces these overlooked crises by combining two complementary signals:
+
+\begin{itemize}[nosep]
+  \item \textbf{Crisis severity} --- the scale and urgency of documented humanitarian need,
+        derived from people-in-need counts, food-insecurity phase data, and conflict events.
+  \item \textbf{Funding gap} --- how far the current funding coverage falls short of
+        requirements, computed from OCHA's Financial Tracking Service (FTS).
+\end{itemize}
+
+A crisis scores high on the neglect index when it is \emph{simultaneously} severe and
+underfunded relative to its cluster peers.
+The system is designed for decision support, not automated allocation: outputs are
+ranked and explained so that a humanitarian analyst or donor advisor can interrogate,
+adjust, and act on them.
+
+\subsection{Design Principles}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Transparency} --- every component of the score is visible and adjustable.
+  \item \textbf{Uncertainty awareness} --- bootstrap confidence intervals surface ranking
+        instability; missing data is flagged, not silently imputed.
+  \item \textbf{Within-cluster fairness} --- all percentile ranks compare crises only
+        against peers in the same humanitarian cluster (e.g.\ Health vs.\ Shelter).
+  \item \textbf{Structural vs.\ acute neglect} --- a six-year FTS history distinguishes
+        chronic underfunding from a recent deterioration.
+  \item \textbf{Human-in-the-loop} --- the Claude-powered chatbot acts as an analytical
+        co-pilot; it never makes allocation decisions autonomously.
+\end{enumerate}
+
+% -----------------------------------------------------------------------------
+\section{Methodology}
+% -----------------------------------------------------------------------------
+
+\subsection{Neglect Index Formula}
+
+For each crisis $c$ (identified by country, humanitarian cluster, and year), the
+neglect index $\mathcal{N}(c)$ is defined as:
+
+\begin{equation}\label{eq:neglect}
+  \mathcal{N}(c) \;=\; \widetilde{S}_w \cdot \text{severity}(c)
+                  \;+\; \widetilde{G}_w \cdot \bigl(1 - \text{coverage\_rank}(c)\bigr)
+\end{equation}
+
+\noindent where $\widetilde{S}_w$ and $\widetilde{G}_w$ are the severity weight and
+funding-gap weight normalised to sum to 1:
+\[
+  \widetilde{S}_w = \frac{S_w}{S_w + G_w}, \qquad
+  \widetilde{G}_w = \frac{G_w}{S_w + G_w}.
+\]
+Default weights: $S_w = 0.6$, $G_w = 0.4$.
+
+\subsection{Severity Score}
+
+The severity term itself is a weighted combination of up to three signals.
+Exactly which signals are used depends on data availability (Cases A--D):
+
+\begin{description}[labelindent=0.5cm, labelsep=1em]
+  \item[Case A (IPC + conflict events available)]
+    \[
+      \text{severity}(c) \;=\; \widetilde{N}_w \cdot \text{need\_rank}(c)
+                          \;+\; \widetilde{I}_w \cdot \text{ipc\_severity}(c)
+                          \;+\; \widetilde{E}_w \cdot \text{events\_rank}(c)
+    \]
+  \item[Case B (IPC only)]
+    \[
+      \text{severity}(c) \;=\; \widetilde{N}_w \cdot \text{need\_rank}(c)
+                          \;+\; \widetilde{I}_w \cdot \text{ipc\_severity}(c)
+    \]
+  \item[Case C (conflict events only)]
+    \[
+      \text{severity}(c) \;=\; \widetilde{N}_w \cdot \text{need\_rank}(c)
+                          \;+\; \widetilde{E}_w \cdot \text{events\_rank}(c)
+    \]
+  \item[Case D (neither IPC nor events)]
+    \[
+      \text{severity}(c) \;=\; \text{need\_rank}(c)
+    \]
+\end{description}
+
+In all cases the sub-weights $\widetilde{N}_w$, $\widetilde{I}_w$, $\widetilde{E}_w$
+are re-normalised to sum to 1 using the available components.
+Default sub-weights: $N_w = 0.5$, $I_w = 0.4$, $E_w = 0.1$.
+
+\subsection{Component Definitions}
+
+\subsubsection{need\_rank}
+
+Percentile rank of the number of \emph{people in need} for crisis $c$ among all
+crises in the same humanitarian cluster.
+Ranks are computed on the aggregate dataset after collapsing multi-year rows into a
+single (country, cluster) observation.
+
+\subsubsection{ipc\_severity}
+
+The Integrated Food Security Phase Classification (IPC) records the population share
+in each phase 1--5 for the ``Food Security'' cluster.
+The IPC severity score maps the average phase $\bar{p}$ to a $[0, 1]$ scale with
+exponential weighting that penalises famine (phase 5) strongly:
+
+\begin{equation}\label{eq:ipc}
+  \text{ipc\_severity} \;=\; \frac{2^{\,\bar{p} - 1} - 1}{15}
+\end{equation}
+
+\noindent This gives $\text{ipc\_severity} = 0$ at phase 1 (minimal) and
+$\text{ipc\_severity} = 1$ at phase 5 (famine).
+
+\subsubsection{events\_rank}
+
+Percentile rank of the number of ACLED conflict events targeting civilians in the
+country and year of crisis $c$, computed within the same humanitarian cluster.
+
+\subsubsection{coverage\_rank}
+
+Percentile rank of the funding coverage ratio:
+\[
+  \text{coverage}(c) \;=\; \min\!\left(\frac{\text{funding}(c)}{\text{requirements}(c)},\; 1\right)
+\]
+A high \code{coverage\_rank} (coverage better than peers) produces a low
+contribution to the neglect index via the $(1 - \text{coverage\_rank})$ term.
+
+\subsection{Structural Neglect Signals}
+
+Using six years of FTS history (2020--2025), each (country, cluster) pair is
+characterised by four structural signals:
+
+\begin{description}[labelindent=0.5cm, labelsep=1em]
+  \item[\texttt{consecutive\_years\_underfunded}]
+    The length of the current streak of years with coverage $<50\%$.
+  \item[\texttt{structural\_neglect\_score}]
+    \[
+      \text{sn\_score} \;=\; 0.6 \cdot \frac{\min(\text{streak}, 5)}{5}
+                       \;+\; 0.4 \cdot \text{pct\_years\_underfunded}
+    \]
+  \item[\texttt{coverage\_trend}]
+    Linear regression slope of coverage over the six-year window.
+    A negative value indicates worsening coverage.
+  \item[\texttt{neglect\_type}]
+    One of: \textbf{structural} ($\geq$3 consecutive years + $\geq$60\% of window
+    underfunded), \textbf{worsening} (negative trend + currently underfunded),
+    \textbf{acute}, \textbf{improving}, or \textbf{adequate}.
+\end{description}
+
+\subsection{Bootstrap Uncertainty Estimation}
+
+When \param{n\_bootstrap} $> 0$ (default 200), the scoring procedure is repeated on
+random sub-samples of the crisis pool.
+The resulting rank distribution is summarised as a 90\% confidence interval
+$[\text{rank}_{5\%},\, \text{rank}_{95\%}]$.
+A wide interval signals that a crisis's rank is sensitive to which other crises happen
+to be in the dataset---a meaningful caveat for sparse clusters.
+
+\subsection{Priority Labels}
+
+Crises are labelled by neglect index thresholds (configurable):
+
+\begin{center}
+  \begin{tabular}{lll}
+    \toprule
+    Label & Default threshold & Interpretation \\
+    \midrule
+    \textcolor{critical-red}{\textbf{Critical}} & $\mathcal{N} \geq 0.80$ & Immediate attention warranted \\
+    \textcolor{high-orange}{\textbf{High}}     & $0.60 \leq \mathcal{N} < 0.80$ & Elevated concern \\
+    \textbf{Medium}  & $0.40 \leq \mathcal{N} < 0.60$ & Monitor closely \\
+    \textbf{Low}     & $\mathcal{N} < 0.40$ & Relatively well covered \\
+    \bottomrule
+  \end{tabular}
+\end{center}
+
+% -----------------------------------------------------------------------------
+\section{System Architecture}
+% -----------------------------------------------------------------------------
+
+The system follows a three-tier architecture: a data layer of static CSV/XLSX files
+plus a live HDX HAPI feed, a Python FastAPI backend, and a React frontend.
+
+\begin{figure}[h]
+\centering
+\begin{minipage}{0.85\textwidth}
+\begin{lstlisting}[language={},numbers=none,frame=single,
+  caption={High-level architecture overview}]
++----------------------------------------------------------+
+|                React Frontend  (:3000)                   |
+|  CsvViewer . TsneChart . Chat/Weights . WorldMap         |
+|                  CounterfactualSlider                    |
++----------------------+-----------------------------------+
+                       |  HTTP / JSON  (:8000)
++----------------------v-----------------------------------+
+|              FastAPI Backend  (:8000)                    |
+|   main.py  -  chatbot.py  -  scorer.py  -  hdx_client   |
++----------------------+-----------------------------------+
+        +--------------+--------------+
+        |                             |
+   CSV / XLSX files             HDX HAPI (live)
+   (data/ directory)            api.hpc.tools
+\end{lstlisting}
+\end{minipage}
+\end{figure}
+
+\subsection{Backend (\texttt{api/})}
+
+\begin{description}[labelindent=0.5cm, labelsep=1em]
+  \item[\texttt{main.py}] FastAPI application.  Defines all HTTP endpoints,
+    loads the aggregate CSV into memory on startup, and wires the scorer,
+    chatbot, and HDX client together.
+  \item[\texttt{scorer.py}] Core scoring engine.  All neglect-index formula
+    logic (Equation~\ref{eq:neglect}) lives here.
+  \item[\texttt{chatbot.py}] Claude API integration.  Runs an agentic loop
+    where Claude can call ten tools (data queries, parameter updates, HDX
+    lookups) before returning a prose response.
+  \item[\texttt{hdx\_client.py}] Rate-limited HTTP client (10 req/60 s) for
+    the HDX HAPI.  Provides eight data-fetching methods.
+\end{description}
+
+\subsection{Frontend (\texttt{frontend/src/})}
+
+\begin{description}[labelindent=0.5cm, labelsep=1em]
+  \item[\texttt{App.js}] Root component; holds all shared state
+    (\code{csvData}, \code{currentParams}, chat history, selected crisis).
+  \item[\texttt{CsvViewer.js}] Sortable, filterable data table.
+    Supports cluster-level and country-level rollup views.
+  \item[\texttt{TsneChart.js}] Interactive 2D scatter plot using Recharts.
+    Points are coloured by neglect index; KMeans cluster assignments are
+    overlaid; outliers are marked with red rings.
+  \item[\texttt{Chat.js}] Chatbot panel.  Renders Claude's Markdown responses
+    and automatically applies parameter updates returned by the API.
+  \item[\texttt{Weights.js}] Collapsible methodology panel showing active
+    weights as normalised bar charts.
+  \item[\texttt{CounterfactualSlider.js}] ``What-if'' overlay.  A funding
+    slider triggers a \apiendpoint{/counterfactual} query; the resulting rank
+    change and new t-SNE position are reflected in real time.
+  \item[\texttt{WorldMap.js}] Geographic view using \texttt{react-simple-maps};
+    hover-to-filter integration with the table.
+  \item[\texttt{RadarModal.js}] Detailed metrics popover for a selected crisis.
+\end{description}
+
+% -----------------------------------------------------------------------------
+\section{API Reference}
+% -----------------------------------------------------------------------------
+
+All endpoints return JSON.  The base URL is \code{http://localhost:8000}.
+
+\subsection{\apiendpoint{GET /metadata}}
+
+Returns the set of available countries, clusters, and years in the loaded dataset.
+
+\textbf{Response:}
+\begin{lstlisting}[language={}]
+{ "countries": [...], "clusters": [...], "years": [...] }
+\end{lstlisting}
+
+\subsection{\apiendpoint{GET /ranking}}
+
+The primary ranking endpoint.  Accepts 25+ query parameters.
+
+\subsubsection*{Filter parameters}
+
+\begin{center}
+\begin{tabular}{lll}
+  \toprule
+  Parameter & Type & Description \\
+  \midrule
+  \param{last\_years} & int & Only include data from the most recent $N$ years \\
+  \param{cluster[]} & string[] & Restrict to specific humanitarian clusters \\
+  \param{country[]} & string[] & Restrict to specific country codes (ISO3) \\
+  \param{min\_people\_in\_need} & float & Minimum people-in-need threshold \\
+  \param{max\_coverage} & float & Maximum funding coverage (0--1) \\
+  \param{min\_neglect\_index} & float & Minimum neglect index filter \\
+  \param{neglect\_type[]} & string[] & Filter by structural neglect type \\
+  \param{min\_consecutive\_years} & int & Minimum consecutive underfunded years \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsubsection*{Weight parameters}
+
+\begin{center}
+\begin{tabular}{lll}
+  \toprule
+  Parameter & Default & Description \\
+  \midrule
+  \param{severity\_weight} & 0.6 & Weight of severity vs.\ funding gap \\
+  \param{funding\_gap\_weight} & 0.4 & Weight of funding gap \\
+  \param{need\_weight} & 0.5 & Sub-weight: people in need \\
+  \param{ipc\_weight} & 0.4 & Sub-weight: IPC food security \\
+  \param{events\_weight} & 0.1 & Sub-weight: conflict events \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsubsection*{Display and pagination parameters}
+
+\begin{center}
+\begin{tabular}{lll}
+  \toprule
+  Parameter & Default & Description \\
+  \midrule
+  \param{critical\_threshold} & 0.8 & Neglect index for ``critical'' label \\
+  \param{high\_threshold} & 0.6 & Neglect index for ``high'' label \\
+  \param{sort\_by} & \texttt{neglect\_index} & Column to sort by \\
+  \param{sort\_desc} & true & Descending sort \\
+  \param{limit} & 50 & Results per page \\
+  \param{offset} & 0 & Pagination offset \\
+  \param{n\_bootstrap} & 0 & Bootstrap iterations (0 = off, max 500) \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{\apiendpoint{GET /tsne}}
+
+Returns a 2D t-SNE projection of the scored crises, plus KMeans cluster assignments
+(2--6 clusters) and outlier flags.
+
+\subsection{\apiendpoint{GET /crisis/\{country\}/\{year\}/\{cluster\}}}
+
+Returns full scoring context for a single crisis: all metrics, ranks, severity case
+(A/B/C/D), and bootstrap confidence bounds.
+
+\subsection{\apiendpoint{GET /counterfactual}}
+
+Computes the hypothetical effect of additional funding on a crisis.
+
+\textbf{Query parameters:} \param{country\_code}, \param{cluster},
+\param{additional\_funding} (USD).
+
+\textbf{Response:}
+\begin{lstlisting}[language={}]
+{
+  "current_neglect_index": 0.84,
+  "new_neglect_index":     0.71,
+  "rank_change":           +12,
+  "coverage_improvement":  0.18
+}
+\end{lstlisting}
+
+\subsection{\apiendpoint{POST /chat} (SIDE TASK)}
+
+Runs the Claude-powered analysis pipeline.
+
+\textbf{Request body:}
+\begin{lstlisting}[language={}]
+{
+  "messages": [ {"role": "user", "content": "..."} ],
+  "current_params": { ...active frontend weights/filters... }
+}
+\end{lstlisting}
+
+Claude may call up to ten internal tools before responding:
+\begin{itemize}[nosep]
+  \item \code{query\_ranking} --- execute a ranking query with custom params
+  \item \code{update\_ranking\_parameters} --- push new params to the frontend
+  \item \code{hdx\_search\_locations}, \code{hdx\_get\_humanitarian\_needs},
+        \code{hdx\_get\_affected\_populations}, \code{hdx\_get\_food\_security},
+        \code{hdx\_get\_conflict\_events}, \code{hdx\_get\_funding},
+        \code{hdx\_get\_operational\_presence}
+\end{itemize}
+
+\textbf{Response:}
+\begin{lstlisting}[language={}]
+{
+  "reply":             "Prose analysis...",
+  "parameter_update":  { ...merged params dict or null... },
+  "ranking_snapshot":  [ ...top results at time of response... ]
+}
+\end{lstlisting}
+
+% -----------------------------------------------------------------------------
+\section{Data Sources}
+% -----------------------------------------------------------------------------
+
+All primary data files reside in the \code{data/} directory.
+
+\begin{longtable}{p{3.8cm}p{4cm}p{6.5cm}}
+  \toprule
+  \textbf{Source} & \textbf{File(s)} & \textbf{Description} \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  FTS (OCHA) &
+  \texttt{fts\_requirements\_funding\_global.csv},
+  \texttt{fts\_requirements\_\allowbreak funding\_globalcluster\_global.csv} &
+  Global funding and requirements, 2000--2025, by country, cluster, and year.
+  Primary source for coverage calculations. \\[4pt]
+
+  HPC / HNO &
+  \texttt{hpc\_hno\_2024.csv},
+  \texttt{hpc\_hno\_2025.csv} &
+  Humanitarian Needs Overview: people in need (PiN) by country, cluster, and year.
+  Source for \code{need\_rank}. \\[4pt]
+
+  IPC (FEWS Net) &
+  \texttt{ipc\_global\_area\_wide.csv} &
+  Integrated Food Security Phase Classification by country and year.
+  Population shares in phases 1--5.
+  Used for \code{ipc\_severity} in the ``Food Security'' cluster. \\[4pt]
+
+  ACLED &
+  \texttt{number\_of\_events\_targeting\_civilians\_\ldots.csv} &
+  Conflict events targeting civilians, by country and year.
+  Source for \code{events\_rank}. \\[4pt]
+
+  INFORM &
+  Multiple \texttt{.xlsx} files (2022--2025 monthly) &
+  INFORM Severity Index.
+  Used as a supplementary cross-check on severity signals. \\[4pt]
+
+  UN OCHA COD &
+  \texttt{cod\_population\_admin*.csv} &
+  Sub-national population statistics (admin levels 0--4). \\
+\end{longtable}
+
+\subsubsection*{Live data (HDX HAPI)}
+
+When the environment variable \code{HDX\_APP\_IDENTIFIER} is set, the chatbot
+can query the HDX Humanitarian API (\texttt{api.hpc.tools}) for real-time data
+on needs, food security, conflict, funding, and operational presence.
+All live queries are rate-limited to 10 requests per 60 seconds.
+
+\subsubsection*{Data merging pipeline}
+
+The aggregate CSV (\code{aggregate.csv}) is produced by
+\code{scripts/data/create\_big\_csv.py} and follows these steps:
+
+\begin{enumerate}[nosep]
+  \item Load FTS plan-level and cluster-level funding.
+  \item Load HNO people-in-need figures (2024, 2025).
+  \item Merge FTS + HNO on \texttt{(countryCode, cluster, year)}.
+  \item Left-merge IPC scores on \texttt{(countryCode, year)} where
+        \texttt{cluster = "Food Security"}.
+  \item Left-merge ACLED civilian events on \texttt{(countryCode, year)}.
+  \item Left-merge structural neglect signals (computed from 6-year FTS window).
+\end{enumerate}
+
+% -----------------------------------------------------------------------------
+\section{Installation \& Setup}
+% -----------------------------------------------------------------------------
+
+\subsection{Prerequisites}
+
+\begin{itemize}[nosep]
+  \item Python 3.11+
+  \item Node.js 18+ and \code{npm}
+  \item \code{uv} (Python package manager) or \code{pip}
+  \item \code{latexmk} and a \LaTeX{} distribution (for this document)
+\end{itemize}
+
+\subsection{Backend}
+
+\begin{lstlisting}[language=bash]
+# Clone and enter the repository
+cd datathon-un
+
+# Create a virtual environment and install Python dependencies
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+uv pip install -r pyproject.toml   # or: pip install -e .
+
+# Configure environment variables
+cp .env.example .env
+# Edit .env:
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   HDX_APP_IDENTIFIER=...          (optional; base64(app_name:app_email))
+
+# Start the API server
+uvicorn api.main:app --reload --port 8000
+\end{lstlisting}
+
+The server will be available at \url{http://localhost:8000}.
+Interactive API docs (Swagger UI) are at \url{http://localhost:8000/docs}.
+
+\subsection{Frontend}
+
+\begin{lstlisting}[language=bash]
+cd frontend
+npm install
+npm start   # Opens http://localhost:3000
+\end{lstlisting}
+
+\subsection{Data Preparation}
+
+If the aggregate CSV is missing or out of date, regenerate it:
+
+\begin{lstlisting}[language=bash]
+python scripts/data/create_big_csv.py
+# Writes: data/aggregate.csv, data/aggregate_historical.csv
+\end{lstlisting}
+
+\subsection{Environment Variables}
+
+\begin{center}
+\begin{tabular}{lll}
+  \toprule
+  Variable & Required & Description \\
+  \midrule
+  \code{ANTHROPIC\_API\_KEY} & Yes & Anthropic API key for the chatbot \\
+  \code{HDX\_APP\_IDENTIFIER} & No & Base64-encoded \texttt{app\_name:app\_email}
+                                     for live HDX data \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+% -----------------------------------------------------------------------------
+\section{Usage Guide}
+% -----------------------------------------------------------------------------
+
+\subsection{Ranking Crises}
+
+After starting both services, open \url{http://localhost:3000}.
+The table on the left displays all crises ranked by the neglect index using the
+default weights ($S_w = 0.6$, $G_w = 0.4$).
+
+\begin{itemize}[nosep]
+  \item Use the \textbf{filter bar} to restrict by text, cluster, or neglect type.
+  \item Toggle between \textbf{cluster view} (one row per country--cluster pair)
+        and \textbf{country view} (rolled up to country level).
+  \item Click a column header to re-sort.
+  \item Priority labels (\textcolor{critical-red}{critical} /
+        \textcolor{high-orange}{high} / medium / low) appear in the first column.
+\end{itemize}
+
+\subsection{Adjusting Weights}
+
+Open the \textbf{Weights} panel to see the active weight configuration.
+Ask Claude in the chat panel to adjust weights (e.g., ``put more emphasis on
+food security and reduce the conflict weight''); Claude will push updated
+parameters to the frontend automatically.
+
+\subsection{t-SNE Visualisation}
+
+Switch to the \textbf{t-SNE view} to see all crises projected onto a 2D plane
+where proximity reflects similarity of the scoring features.
+Points are coloured from green (low neglect) to red (high neglect).
+Outlier crises are ringed in red.
+
+\subsection{Counterfactual Analysis}
+
+Click any row in the table to open the \textbf{Counterfactual Slider}.
+Drag the funding slider to see in real time:
+
+\begin{itemize}[nosep]
+  \item The new neglect index and rank after the hypothetical funding is added.
+  \item The ghost position (original) and new position on the t-SNE chart.
+\end{itemize}
+
+\subsection{Chatbot}
+
+The chat panel accepts natural language queries such as:
+
+\begin{itemize}[nosep]
+  \item \textit{``Which food security crises in Sub-Saharan Africa have been underfunded for more than three consecutive years?''}
+  \item \textit{``Show me the top 10 most neglected health crises and explain what drives their scores.''}
+  \item \textit{``What would happen if the Yemen Food Security cluster received an extra \$200 million?''}
+\end{itemize}
+
+Claude will query the ranking engine, call HDX tools as needed, and return a
+prose response.  If it suggests parameter changes, the frontend updates automatically.
+
+% -----------------------------------------------------------------------------
+\section{Limitations and Caveats}
+% -----------------------------------------------------------------------------
+
+\begin{enumerate}
+  \item \textbf{Data coverage is uneven.}
+    IPC food-insecurity data exists only for the ``Food Security'' cluster.
+    ACLED events are available at country level, not cluster level---all clusters
+    in the same country receive the same events rank.
+    Crises with missing requirements or needs figures are not scored.
+
+  \item \textbf{Funding data reflects reported figures, not actual spending.}
+    FTS coverage ratios measure pledged/tracked funding against stated requirements.
+    Under-reported funding or inflated requirements both distort the neglect index.
+
+  \item \textbf{Bootstrap intervals are approximate.}
+    The bootstrap procedure resamples the full crisis pool, not individual data
+    points within a crisis.  Narrow clusters with few observations will exhibit
+    wide intervals.
+
+  \item \textbf{The scoring is relative, not absolute.}
+    A country that scores ``critical'' is critical \emph{relative to its cluster peers}.
+    A poorly covered cluster with uniformly low coverage may have many critical entries
+    even if absolute need is modest.
+
+  \item \textbf{The tool is for decision support, not automated allocation.}
+    Rankings should be interpreted alongside qualitative context.
+    Do not use the neglect index as the sole basis for funding decisions.
+\end{enumerate}
+
+% -----------------------------------------------------------------------------
+\section{Project Structure}
+% -----------------------------------------------------------------------------
+
+\begin{lstlisting}[language={},numbers=none]
+datathon-un/
++-- api/
+|   +-- main.py            # FastAPI application and endpoints
+|   +-- scorer.py          # Neglect index scoring engine
+|   +-- chatbot.py         # Claude API integration
+|   +-- hdx_client.py      # HDX HAPI HTTP client
++-- frontend/
+|   +-- src/
+|   |   +-- App.js                   # Root component / state
+|   |   +-- CsvViewer.js             # Data table
+|   |   +-- TsneChart.js             # t-SNE scatter plot
+|   |   +-- Chat.js                  # Chatbot panel
+|   |   +-- Weights.js               # Methodology weights display
+|   |   +-- CounterfactualSlider.js  # Funding scenario modal
+|   |   +-- WorldMap.js              # Geographic map view
+|   |   +-- RadarModal.js            # Detailed metrics popover
+|   +-- package.json
++-- data/                  # CSV and XLSX data files (gitignored)
++-- scripts/
+|   +-- data/
+|       +-- create_big_csv.py  # Data aggregation script
++-- notebooks/             # Exploratory Jupyter notebooks
++-- docs/
+|   +-- documentation.tex  # This document
+|   +-- workshop_notes.md  # Datathon brief and notes
++-- pyproject.toml         # Python dependencies
++-- .env.example           # Environment variable template
+\end{lstlisting}
+
+% -----------------------------------------------------------------------------
+\appendix
+\section{Humanitarian Cluster Taxonomy}
+% -----------------------------------------------------------------------------
+
+The IASC cluster system organises humanitarian response into thematic areas.
+The following clusters appear in the HCNI dataset:
+
+\begin{center}
+\begin{tabular}{ll}
+  \toprule
+  Cluster & Description \\
+  \midrule
+  Food Security & Food assistance and livelihoods \\
+  Health & Primary and secondary healthcare \\
+  Nutrition & Acute malnutrition treatment and prevention \\
+  WASH & Water, sanitation, and hygiene \\
+  Shelter & Emergency shelter and NFIs \\
+  Protection & Safety, dignity, and rights \\
+  Education & Emergency and transitional education \\
+  Logistics & Humanitarian supply chain \\
+  Emergency Telecoms & Connectivity and ICT \\
+  Camp Coordination & Site management for displacement \\
+  Early Recovery & Restoration of basic services \\
+  Multi-Sector & Refugee response (UNHCR-led) \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}
