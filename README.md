@@ -9,7 +9,7 @@ Presentation slides are available in `Alles_GUT-Presentation.pdf` at the reposit
 
 ## Authors
 
-Contributors (from git history):
+Contributors:
 
 - Dominik Lau
 - Jerzy Szyjut
