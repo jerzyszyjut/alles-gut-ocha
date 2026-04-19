@@ -1,6 +1,6 @@
 # Getting data
 
-1. Get it from ...
+1. Get it from [our drive](https://drive.google.com/drive/folders/119UF38zKSD6lHwrBdllwuujHDMsiP7l-?usp=sharing) [source: HDX]
 2. Extract to `data` in project directory
 
 # Claude API
