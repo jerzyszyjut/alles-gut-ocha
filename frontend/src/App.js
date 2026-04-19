@@ -127,6 +127,7 @@ function App() {
                 currentParams={currentParams}
                 selectedCrisis={selectedCrisis}
                 counterfactualResult={counterfactualResult}
+                rankingData={csvData}
               />
           )}
         </div>

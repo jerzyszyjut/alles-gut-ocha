@@ -113,18 +113,66 @@ const CsvViewer = ({
       return <td key={h} style={styles.td}><span style={styles.empty}>—</span></td>;
     }
 
-    // Rank: show "#N [CI low–high]"
+    // Rank: show "#N [CI low–high]" with CI width color-coded
     if (h === 'rank') {
       const lo = row.rank_ci_low;
       const hi = row.rank_ci_high;
+      const span = lo != null && hi != null ? hi - lo : null;
+      const ciColor = span == null ? '#999' : span <= 3 ? '#16a34a' : span <= 8 ? '#d97706' : '#dc2626';
       return (
-        <td key={h} style={styles.td}>
+        <td key={h} style={styles.td} title={span != null ? `Bootstrap rank CI [${lo}–${hi}] at 90% confidence (width ${span})` : undefined}>
           <span style={{ fontWeight: 600 }}>#{v}</span>
           {lo != null && hi != null && (
-            <span style={{ color: '#999', fontSize: 10, marginLeft: 4 }}>
+            <span style={{ color: ciColor, fontSize: 10, marginLeft: 4 }}>
               [{lo}–{hi}]
             </span>
           )}
+        </td>
+      );
+    }
+
+    // Neglect index: mini bar with ±uncertainty overlay
+    if (h === 'neglect_index') {
+      const u = row.uncertainty;
+      const W = 72;
+      const barW = Math.round(v * W);
+      const uLo = u != null ? Math.round(Math.max(0, v - u) * W) : null;
+      const uHi = u != null ? Math.round(Math.min(1, v + u) * W) : null;
+      return (
+        <td key={h} style={styles.td} title={u != null ? `${v.toFixed(4)} ± ${u.toFixed(4)} (1σ bootstrap)` : v.toFixed(4)}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ fontWeight: 600, fontSize: 12, minWidth: 32 }}>{v.toFixed(3)}</span>
+            <div style={{ position: 'relative', height: 5, width: W, background: '#e5e7eb', borderRadius: 3, flexShrink: 0 }}>
+              {uLo != null && (
+                <div style={{
+                  position: 'absolute', left: uLo, width: uHi - uLo,
+                  top: 0, height: '100%', background: '#fca5a5', borderRadius: 2,
+                }} />
+              )}
+              <div style={{
+                position: 'absolute', left: 0, width: barW,
+                top: 0, height: '100%', background: '#2563eb', borderRadius: 3,
+              }} />
+            </div>
+          </div>
+        </td>
+      );
+    }
+
+    // Uncertainty: colored badge (low/medium/high)
+    if (h === 'uncertainty') {
+      const level = v < 0.03 ? 'low' : v < 0.07 ? 'medium' : 'high';
+      const UCOL = { low: '#16a34a', medium: '#d97706', high: '#dc2626' };
+      const c = UCOL[level];
+      return (
+        <td key={h} style={styles.td} title={`Bootstrap σ = ${v.toFixed(4)} — std dev of neglect index across 50 resamples`}>
+          <span style={{
+            display: 'inline-block', padding: '1px 7px', borderRadius: 10,
+            fontSize: 11, fontWeight: 600,
+            background: c + '18', color: c, border: `1px solid ${c}44`,
+          }}>
+            {level} {v.toFixed(3)}
+          </span>
         </td>
       );
     }

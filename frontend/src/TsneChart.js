@@ -35,17 +35,25 @@ const estimatePosition = (allData, target, newNeglect, newCoverage, k = 6) => {
   };
 };
 
-// Normal dot
+// Normal dot — ring radius encodes bootstrap uncertainty (σ)
 const Dot = ({ cx, cy, payload, fill }) => {
+  const u = payload?.uncertainty;
+  const uRing = u != null && u > 0.005 ? Math.min(22, 5 + u * 100) : null;
   if (payload?.is_outlier) {
     return (
       <g>
+        {uRing && <circle cx={cx} cy={cy} r={uRing} fill={fill} fillOpacity={0.1} stroke={fill} strokeWidth={0.5} strokeDasharray="2 1" />}
         <circle cx={cx} cy={cy} r={8} fill={fill} fillOpacity={0.3} stroke="#dc2626" strokeWidth={2} />
         <circle cx={cx} cy={cy} r={4} fill="#dc2626" />
       </g>
     );
   }
-  return <circle cx={cx} cy={cy} r={4} fill={fill} fillOpacity={0.75} />;
+  return (
+    <g>
+      {uRing && <circle cx={cx} cy={cy} r={uRing} fill={fill} fillOpacity={0.12} stroke={fill} strokeWidth={0.5} strokeDasharray="2 1" />}
+      <circle cx={cx} cy={cy} r={4} fill={fill} fillOpacity={0.75} />
+    </g>
+  );
 };
 
 // Selected dot (rendered in its own Scatter so position is controlled via data)
@@ -129,6 +137,14 @@ const ChartTooltip = ({ active, payload, selectedCrisis, counterfactualResult })
           Counterfactual: rank #{cf.current_rank} → #{cf.new_rank} of {cf.total_in_cluster}
         </div>
       )}
+      {d.uncertainty != null && (
+        <div style={{ color: '#586069', fontSize: 11, marginTop: 4 }}>
+          Uncertainty: <strong>σ={d.uncertainty.toFixed(3)}</strong>
+          <span style={{ marginLeft: 4, color: d.uncertainty < 0.03 ? '#16a34a' : d.uncertainty < 0.07 ? '#d97706' : '#dc2626' }}>
+            ({d.uncertainty < 0.03 ? 'low' : d.uncertainty < 0.07 ? 'medium' : 'high'})
+          </span>
+        </div>
+      )}
       {d.is_outlier && (
         <div style={{ color: '#dc2626', fontWeight: 600, marginTop: 6 }}>
           ⚠ Outlier from support cluster
@@ -138,7 +154,7 @@ const ChartTooltip = ({ active, payload, selectedCrisis, counterfactualResult })
   );
 };
 
-const TsneChart = ({ currentParams, selectedCrisis, counterfactualResult }) => {
+const TsneChart = ({ currentParams, selectedCrisis, counterfactualResult, rankingData }) => {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -169,6 +185,14 @@ const TsneChart = ({ currentParams, selectedCrisis, counterfactualResult }) => {
 
   useEffect(() => { fetchTsne(); }, [fetchTsne]);
 
+  const uncertaintyMap = useMemo(() => {
+    const map = {};
+    (rankingData || []).forEach(r => {
+      if (r.uncertainty != null) map[`${r.countryCode}_${r.cluster}`] = r.uncertainty;
+    });
+    return map;
+  }, [rankingData]);
+
   const kmeansGroups = useMemo(() => {
     const map = {};
     data.forEach(d => {
@@ -180,10 +204,10 @@ const TsneChart = ({ currentParams, selectedCrisis, counterfactualResult }) => {
       ) return;
       const key = d.kmeans_cluster;
       if (!map[key]) map[key] = [];
-      map[key].push(d);
+      map[key].push({ ...d, uncertainty: uncertaintyMap[`${d.countryCode}_${d.cluster}`] ?? null });
     });
     return map;
-  }, [data, selectedCrisis]);
+  }, [data, selectedCrisis, uncertaintyMap]);
 
   // Selected point with optionally estimated new position via KNN
   const selectedPointData = useMemo(() => {
@@ -192,6 +216,7 @@ const TsneChart = ({ currentParams, selectedCrisis, counterfactualResult }) => {
       d => d.countryCode === selectedCrisis.countryCode && d.cluster === selectedCrisis.cluster
     );
     if (!orig) return null;
+    const u = uncertaintyMap[`${orig.countryCode}_${orig.cluster}`] ?? null;
 
     if (counterfactualResult) {
       const pos = estimatePosition(
@@ -209,10 +234,11 @@ const TsneChart = ({ currentParams, selectedCrisis, counterfactualResult }) => {
         // pixel coords of ghost are set dynamically via the chart scale — store data coords
         _origX: orig.x,
         _origY: orig.y,
+        uncertainty: u,
       }];
     }
-    return [{ ...orig, hasCF: false }];
-  }, [data, selectedCrisis, counterfactualResult]);
+    return [{ ...orig, hasCF: false, uncertainty: u }];
+  }, [data, selectedCrisis, counterfactualResult, uncertaintyMap]);
 
   const clusterIds = useMemo(() => Object.keys(kmeansGroups).map(Number).sort((a, b) => a - b), [kmeansGroups]);
 
@@ -249,6 +275,13 @@ const TsneChart = ({ currentParams, selectedCrisis, counterfactualResult }) => {
             <circle cx={7} cy={7} r={3} fill="#dc2626" />
           </svg>
           Outlier from cluster
+        </span>
+        <span style={styles.legendItem}>
+          <svg width={22} height={14}>
+            <circle cx={11} cy={7} r={9} fill="#888" fillOpacity={0.12} stroke="#888" strokeWidth={0.5} strokeDasharray="2 1" />
+            <circle cx={11} cy={7} r={3} fill="#888" fillOpacity={0.75} />
+          </svg>
+          Ring = rank uncertainty (σ)
         </span>
       </div>
 
