@@ -18,6 +18,9 @@ Contributors:
 
 ## Technical documentation
 
+- Documentation PDF: [docs/documentation.pdf](docs/documentation.pdf)
+- Presentation: [Alles_GUT-Presentation.pdf](Alles_GUT-Presentation.pdf)
+
 ## Getting data
 
 1. Download datasets from [our drive](https://drive.google.com/drive/folders/119UF38zKSD6lHwrBdllwuujHDMsiP7l-?usp=sharing) (source: HDX).
