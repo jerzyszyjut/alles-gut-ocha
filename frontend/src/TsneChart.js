@@ -107,6 +107,23 @@ const ChartTooltip = ({ active, payload, selectedCrisis, counterfactualResult })
         )}
       </div>
       <div>People in Need: <strong>{d.people_in_need.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></div>
+      {d.neglect_type && (
+        <div style={{ marginTop: 5 }}>
+          <span style={{
+            display: 'inline-block', padding: '1px 7px', borderRadius: 10,
+            fontSize: 11, fontWeight: 600, textTransform: 'capitalize',
+            background: { structural:'#7c3aed', worsening:'#dc2626', acute:'#d97706', improving:'#16a34a', adequate:'#6b7280' }[d.neglect_type] + '22',
+            color: { structural:'#7c3aed', worsening:'#dc2626', acute:'#d97706', improving:'#16a34a', adequate:'#6b7280' }[d.neglect_type],
+          }}>
+            {d.neglect_type}
+          </span>
+          {d.consecutive_years_underfunded > 0 && (
+            <span style={{ fontSize: 11, color: '#586069', marginLeft: 6 }}>
+              {d.consecutive_years_underfunded}yr streak
+            </span>
+          )}
+        </div>
+      )}
       {cf && (
         <div style={{ color: '#1d4ed8', fontSize: 11, marginTop: 6, borderTop: '1px solid #e2e8f0', paddingTop: 5 }}>
           Counterfactual: rank #{cf.current_rank} → #{cf.new_rank} of {cf.total_in_cluster}

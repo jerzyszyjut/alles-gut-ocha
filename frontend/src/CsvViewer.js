@@ -1,23 +1,27 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 // Columns hidden from the generic column list (rendered via custom logic or unused)
-const HIDDEN_CLUSTER = new Set(['countryCode', 'rank_ci_low', 'rank_ci_high']);
+const HIDDEN_CLUSTER = new Set(['countryCode', 'rank_ci_low', 'rank_ci_high', 'n_years_data']);
 
 const COLUMN_LABELS = {
-  rank:               'Rank',
-  countryName:        'Country',
-  cluster:            'Cluster',
-  severity_case:      'Inputs',
-  people_in_need:     'People in Need',
-  requirements_usd:   'Requirements (USD)',
-  funding_usd:        'Funding (USD)',
-  coverage:           'Coverage',
-  neglect_index:      'Neglect Index',
-  need_rank:          'Need Rank',
-  coverage_rank:      'Coverage Rank',
-  ipc_severity_score: 'IPC Severity',
-  uncertainty:        'Uncertainty',
-  priority_label:     'Priority',
+  rank:                          'Rank',
+  countryName:                   'Country',
+  cluster:                       'Cluster',
+  severity_case:                 'Inputs',
+  people_in_need:                'People in Need',
+  requirements_usd:              'Requirements (USD)',
+  funding_usd:                   'Funding (USD)',
+  coverage:                      'Coverage',
+  neglect_index:                 'Neglect Index',
+  need_rank:                     'Need Rank',
+  coverage_rank:                 'Coverage Rank',
+  ipc_severity_score:            'IPC Severity',
+  uncertainty:                   'Uncertainty',
+  priority_label:                'Priority',
+  neglect_type:                  'Neglect Type',
+  structural_neglect_score:      'Structural Score',
+  consecutive_years_underfunded: 'Yrs Underfunded',
+  coverage_trend:                'Funding Trend',
 };
 
 const COUNTRY_HEADERS = [
@@ -34,7 +38,7 @@ const COUNTRY_LABELS = {
 };
 
 const NON_NUMERIC = new Set([
-  'countryCode', 'countryName', 'cluster', 'priority_label', 'severity_case',
+  'countryCode', 'countryName', 'cluster', 'priority_label', 'severity_case', 'neglect_type',
 ]);
 
 const PRIORITY_COLORS = {
@@ -53,6 +57,14 @@ const formatLabel = (key, isCountry) => {
   return labels[key] ?? key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 };
 
+const NEGLECT_TYPE_OPTIONS = [
+  { value: null,         label: 'All',        color: '#586069' },
+  { value: 'structural', label: 'Structural',  color: '#7c3aed' },
+  { value: 'worsening',  label: 'Worsening',   color: '#dc2626' },
+  { value: 'acute',      label: 'Acute',       color: '#d97706' },
+  { value: 'improving',  label: 'Improving',   color: '#16a34a' },
+];
+
 const CsvViewer = ({
   data = [],
   countryData = [],
@@ -64,6 +76,7 @@ const CsvViewer = ({
   selectedCrisis,
   onSelectCrisis,
 }) => {
+  const [neglectTypeFilter, setNeglectTypeFilter] = useState(null);
   const isCountry = viewMode === 'country';
   const rows = isCountry ? countryData : data;
 
@@ -73,12 +86,15 @@ const CsvViewer = ({
         ? Object.keys(rows[0]).filter(h => !HIDDEN_CLUSTER.has(h))
         : []);
 
-  // Client-side filter
-  const filtered = filter
-    ? rows.filter(row =>
-        Object.values(row).some(v => String(v).toLowerCase().includes(filter.toLowerCase()))
-      )
-    : rows;
+  const filtered = rows.filter(row => {
+    if (filter && !Object.values(row).some(v => String(v).toLowerCase().includes(filter.toLowerCase()))) {
+      return false;
+    }
+    if (!isCountry && neglectTypeFilter && row.neglect_type !== neglectTypeFilter) {
+      return false;
+    }
+    return true;
+  });
 
   const isSelected = (row) =>
     selectedCrisis &&
@@ -151,6 +167,48 @@ const CsvViewer = ({
       );
     }
 
+    // Neglect type: colored badge
+    if (h === 'neglect_type') {
+      const NEGLECT_COLORS = {
+        structural: '#7c3aed', worsening: '#dc2626',
+        acute: '#d97706', improving: '#16a34a', adequate: '#6b7280',
+      };
+      const NEGLECT_TIPS = {
+        structural: '≥3 consecutive underfunded years — systemic failure',
+        worsening:  'Coverage declining rapidly — on the structural path',
+        acute:      'Currently underfunded but not yet chronic',
+        improving:  'Coverage recovering — positive trend',
+        adequate:   'Adequately funded',
+      };
+      const color = NEGLECT_COLORS[v] || '#6b7280';
+      return (
+        <td key={h} style={styles.td} title={NEGLECT_TIPS[v] || v}>
+          <span style={{
+            display: 'inline-block', padding: '1px 7px', borderRadius: 10,
+            fontSize: 11, fontWeight: 600,
+            background: color + '18', color,
+            border: `1px solid ${color}44`,
+            textTransform: 'capitalize', cursor: 'help',
+          }}>
+            {v}
+          </span>
+        </td>
+      );
+    }
+
+    // Coverage trend: show arrow + value
+    if (h === 'coverage_trend') {
+      const arrow = v > 0.005 ? '▲' : v < -0.005 ? '▼' : '→';
+      const color = v > 0.005 ? '#16a34a' : v < -0.005 ? '#dc2626' : '#6b7280';
+      return (
+        <td key={h} style={styles.td} title={`${v > 0 ? '+' : ''}${v.toFixed(3)} coverage per year`}>
+          <span style={{ color, fontWeight: 600 }}>
+            {arrow} {Math.abs(v).toFixed(3)}
+          </span>
+        </td>
+      );
+    }
+
     const display = typeof v === 'number' && !NON_NUMERIC.has(h)
       ? v.toLocaleString(undefined, { maximumFractionDigits: 3 })
       : v;
@@ -173,6 +231,28 @@ const CsvViewer = ({
             onChange={e => setFilter(e.target.value)}
             style={styles.searchInput}
           />
+          {!isCountry && (
+            <div style={styles.neglectTypeBar} title="Filter by structural neglect classification">
+              {NEGLECT_TYPE_OPTIONS.map(opt => {
+                const active = neglectTypeFilter === opt.value;
+                return (
+                  <button
+                    key={opt.value ?? 'all'}
+                    onClick={() => setNeglectTypeFilter(active ? null : opt.value)}
+                    style={{
+                      ...styles.neglectBtn,
+                      background: active ? opt.color + '22' : 'transparent',
+                      color: active ? opt.color : '#586069',
+                      border: `1px solid ${active ? opt.color : '#d1d5da'}`,
+                      fontWeight: active ? 700 : 500,
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {setViewMode && (
             <div style={styles.toggleGroup}>
               <button
@@ -269,6 +349,11 @@ const styles = {
     boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
   },
   stats: { fontSize: 12, color: '#586069', whiteSpace: 'nowrap' },
+  neglectTypeBar: { display: 'flex', gap: 4, alignItems: 'center' },
+  neglectBtn: {
+    padding: '2px 9px', fontSize: 11, borderRadius: 12,
+    cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.15s',
+  },
   tableWrapper: { overflowX: 'auto', overflowY: 'auto', flex: 1 },
   table: {
     width: '100%', borderCollapse: 'collapse',

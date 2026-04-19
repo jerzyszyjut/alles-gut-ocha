@@ -76,14 +76,43 @@ high     → neglect_index ≥ 0.6
 medium   → neglect_index ≥ 0.4
 low      → neglect_index < 0.4
 
+### Structural neglect signals (bonus layer — multi-year FTS history 2019-2025)
+These signals distinguish *chronic* underfunding from *acute* gaps using 6 years of FTS cluster
+funding data. They are precomputed and joined to every (country, cluster) row.
+
+| Field | Definition |
+|---|---|
+| consecutive_years_underfunded | Current streak of years with coverage < 50 % (most recent first) |
+| structural_neglect_score | 0–1: 0.6 × (consecutive/5) + 0.4 × (fraction of window underfunded) |
+| coverage_trend | Linear slope of annual coverage over the window (negative = worsening) |
+| neglect_type | Label: 'structural' \| 'worsening' \| 'acute' \| 'improving' \| 'adequate' |
+| n_years_data | Number of years with FTS data available in the window |
+
+**neglect_type rules:**
+- `structural`: consecutive ≥ 3 years AND ≥ 60 % of window underfunded → *systemic failure*
+- `worsening`: coverage_trend < −0.03 AND currently underfunded → *deteriorating fast*
+- `acute`: currently underfunded but not yet structural → *new or one-off gap*
+- `improving`: coverage_trend > +0.03 AND fewer than 2 consecutive recent underfunded years
+- `adequate`: coverage ≥ 50 % and not worsening
+
+**Why this matters:** A crisis labelled `structural` has failed to attract adequate funding for
+3+ consecutive years — the gap is systemic, not situational, and unlikely to self-correct.
+An `acute` crisis may respond to targeted advocacy. A `worsening` crisis is on the structural
+path and requires urgent attention. Use these to go beyond today's snapshot and ask:
+*"Is this crisis chronically overlooked or newly overlooked?"*
+
+**How to use in queries:** Filter `neglect_type=['structural']` to find the most entrenched cases.
+Sort by `structural_neglect_score` to surface chronic neglect alongside point-in-time rankings.
+
 ### Data sources
-- FTS (OCHA Financial Tracking Service): funding and requirements per country/cluster/year
+- FTS (OCHA Financial Tracking Service): funding and requirements per country/cluster/year (2000-2025)
 - HPC (Humanitarian Programme Cycle): people in need per sector
 - IPC (Integrated Food Security Phase Classification): food insecurity severity by phase
 - ACLED: number of events targeting civilians per country/year
 
 ### Available data
-Years: 2024, 2025 (use last_years=1 for latest year only, last_years=2 for both)
+HNO years: 2024, 2025 (use last_years=1 for latest year only, last_years=2 for both)
+Structural signals: up to 6 years of FTS history (2019–2025)
 Clusters: Agriculture · Camp Coordination / Management · Coordination and support services ·
   Early Recovery · Education · Emergency Shelter and NFI · Food Security · Health ·
   Logistics · Multi-sector · Nutrition · Protection · Protection - Child Protection ·
@@ -184,6 +213,21 @@ _FILTER_PROPS: dict[str, Any] = {
         "type": "number",
         "description": "Only include crises at or above this neglect score [0-1].",
     },
+    "neglect_type": {
+        "type": "array", "items": {"type": "string"},
+        "description": (
+            "Filter by structural neglect classification. "
+            "Values: 'structural' (≥3 consecutive underfunded years), "
+            "'worsening' (coverage trend strongly negative), "
+            "'acute' (currently underfunded but not chronic), "
+            "'improving' (coverage recovering), 'adequate' (≥50% funded). "
+            "Use ['structural'] to surface the most entrenched crises."
+        ),
+    },
+    "min_consecutive_years": {
+        "type": "integer",
+        "description": "Only include crises underfunded for at least this many consecutive years. E.g. 3 = structural neglect threshold.",
+    },
 }
 
 _WEIGHT_PROPS: dict[str, Any] = {
@@ -223,7 +267,11 @@ _DISPLAY_PROPS: dict[str, Any] = {
     },
     "sort_by": {
         "type": "string",
-        "description": "Column to sort by. Default: 'neglect_index'.",
+        "description": (
+            "Column to sort by. Default: 'neglect_index'. "
+            "Also available: 'structural_neglect_score' (sort by chronic underfunding), "
+            "'consecutive_years_underfunded', 'coverage_trend' (most worsening first when desc)."
+        ),
     },
     "sort_desc": {
         "type": "boolean",
@@ -467,6 +515,8 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "min_people_in_need": None,
     "max_coverage": None,
     "min_neglect_index": None,
+    "neglect_type": None,
+    "min_consecutive_years": None,
     "severity_weight": 0.6,
     "funding_gap_weight": 0.4,
     "need_weight": 0.5,
@@ -535,11 +585,25 @@ def _execute_query(params: dict, df_base: pd.DataFrame) -> list[dict]:
         df = df[df["coverage"] <= params["max_coverage"]]
     if params.get("min_neglect_index") is not None:
         df = df[df["neglect_index"] >= params["min_neglect_index"]]
+    if params.get("neglect_type") and "neglect_type" in df.columns:
+        df = df[df["neglect_type"].isin(params["neglect_type"])]
+    if params.get("min_consecutive_years") is not None and "consecutive_years_underfunded" in df.columns:
+        df = df[df["consecutive_years_underfunded"] >= params["min_consecutive_years"]]
 
     sort_by = params.get("sort_by", "neglect_index")
     sort_desc = params.get("sort_desc", True)
     if sort_by in df.columns:
         df = df.sort_values(sort_by, ascending=not sort_desc, na_position="last")
+
+    def _opt_str(v: Any) -> str | None:
+        if v is None:
+            return None
+        try:
+            if isinstance(v, float) and math.isnan(v):
+                return None
+        except TypeError:
+            pass
+        return str(v)
 
     limit = params.get("limit", None)
     rows = []
@@ -558,6 +622,11 @@ def _execute_query(params: dict, df_base: pd.DataFrame) -> list[dict]:
             "coverage_rank": round(float(row["coverage_rank"]), 4),
             "ipc_severity_score": _opt(row.get("ipc_severity_score")),
             "priority_label": _priority_label(float(row["neglect_index"])),
+            # Structural neglect signals
+            "consecutive_years_underfunded": _opt(row.get("consecutive_years_underfunded")),
+            "structural_neglect_score": _opt(row.get("structural_neglect_score")),
+            "coverage_trend": _opt(row.get("coverage_trend")),
+            "neglect_type": _opt_str(row.get("neglect_type")),
         })
     return rows
 

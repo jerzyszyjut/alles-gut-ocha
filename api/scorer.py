@@ -59,7 +59,7 @@ def load_civilian_events() -> pd.DataFrame:
 
 
 def load_ipc_data() -> pd.DataFrame:
-    df = pd.read_csv(DATA_DIR / "ipc_global_area_wide.csv")
+    df = pd.read_csv(DATA_DIR / "ipc_global_area_wide.csv", low_memory=False)
     df["year"] = pd.to_datetime(df["Date of analysis"], format="%b %Y").dt.year
     phase_cols = {
         "Phase 1 number current": "ipc_phase_1_people",
@@ -138,24 +138,146 @@ def _aggregate_needs_year(year: str) -> pd.DataFrame:
     return df_melted
 
 
+_STRUCTURAL_NEGLECT_COLS = frozenset([
+    'consecutive_years_underfunded',
+    'structural_neglect_score',
+    'coverage_trend',
+    'n_years_data',
+])
+
+
 def aggregate_by_country_cluster(df: pd.DataFrame) -> pd.DataFrame:
     """Collapse a multi-year dataframe to one row per (countryCode, cluster).
 
-    Numeric columns are averaged across years; country_total_pin (the
-    deduplicated ALL-cluster country total) is preserved via max since it is
-    the same value for every cluster row belonging to the same country.
+    Numeric columns are averaged across years; structural neglect signals and
+    country_total_pin are preserved via max/first since they are invariant
+    across year-rows for the same (country, cluster) pair.
     The year column is dropped entirely.
     """
     group_keys = ['countryCode', 'cluster']
+    skip_from_avg = {'year', 'country_total_pin'} | _STRUCTURAL_NEGLECT_COLS
     avg_cols = [
         c for c in df.select_dtypes(include='number').columns
-        if c not in ('year', 'country_total_pin')
+        if c not in skip_from_avg
     ]
     result = df.groupby(group_keys, as_index=False)[avg_cols].mean()
+
     if 'country_total_pin' in df.columns:
         totals = df.groupby(group_keys, as_index=False)['country_total_pin'].max()
         result = result.merge(totals, on=group_keys, how='left')
+
+    # Structural signals are identical across year-rows: preserve via max
+    struct_num = [c for c in _STRUCTURAL_NEGLECT_COLS if c in df.columns]
+    if struct_num:
+        struct_agg = df.groupby(group_keys, as_index=False)[struct_num].max()
+        result = result.merge(struct_agg, on=group_keys, how='left')
+
+    # Preserve string/categorical columns that don't vary by year (e.g. neglect_type)
+    str_cols = [
+        c for c in df.select_dtypes(include='object').columns
+        if c not in group_keys
+    ]
+    if str_cols:
+        first_strs = df.groupby(group_keys)[str_cols].first().reset_index()
+        result = result.merge(first_strs, on=group_keys, how='left')
+
     return result
+
+
+_EXCLUDE_STRUCTURAL_CLUSTERS = frozenset([
+    'Not specified', 'Multiple clusters/sectors (shared)', 'Other',
+    'COVID-19', 'Emergency Telecommunications',
+    'Protection - Human Trafficking & Smuggling',
+])
+
+
+def load_structural_neglect_signals(
+    years_back: int = 6,
+    underfunded_threshold: float = 0.5,
+) -> pd.DataFrame:
+    """Compute structural neglect signals from the full FTS cluster funding history.
+
+    For each (countryCode, cluster) uses up to *years_back* years of data to compute:
+    - consecutive_years_underfunded: current streak of underfunded years (most recent first)
+    - structural_neglect_score: 0-1 composite (higher = more chronic neglect)
+    - coverage_trend: linear slope of annual coverage (negative = worsening)
+    - neglect_type: 'structural' | 'worsening' | 'acute' | 'improving' | 'adequate'
+    - n_years_data: number of years with coverage data in the window
+
+    Methodology: a crisis is *structural* when ≥3 consecutive recent years are underfunded
+    AND the overall underfunding rate in the window is ≥60 %.
+    A crisis is *worsening* when the coverage trend is strongly negative.
+    This lets analysts separate chronic systemic failure from one-off gaps.
+    """
+    df = pd.read_csv(DATA_DIR / "fts_requirements_funding_globalcluster_global.csv")
+    df['requirements'] = pd.to_numeric(df['requirements'], errors='coerce')
+    df['funding'] = pd.to_numeric(df['funding'], errors='coerce')
+    df['coverage'] = (
+        df['funding'] / df['requirements'].replace(0, np.nan)
+    ).clip(0, 1).fillna(0)
+
+    # Cap at 2025: 2026 FTS data is partial (only a few months) and distorts trend signals
+    max_year = min(int(df['year'].max()), 2025)
+    min_year = max_year - years_back + 1
+    df = df[df['year'].between(min_year, max_year)].copy()
+    df = df[~df['cluster'].isin(_EXCLUDE_STRUCTURAL_CLUSTERS)]
+
+    rows: list[dict] = []
+    for (country, cluster), grp in df.groupby(['countryCode', 'cluster']):
+        grp = grp.sort_values('year', ascending=False)
+        coverages = grp['coverage'].tolist()
+        years = grp['year'].tolist()
+        n = len(years)
+        if n == 0:
+            continue
+
+        # Current consecutive underfunded streak (counting from most recent year)
+        consecutive = 0
+        for cov in coverages:
+            if cov < underfunded_threshold:
+                consecutive += 1
+            else:
+                break
+
+        n_underfunded = sum(1 for c in coverages if c < underfunded_threshold)
+        pct_underfunded = n_underfunded / n
+
+        # Linear coverage trend over window
+        if n >= 3:
+            xs = np.array(years, dtype=float) - np.mean(years)
+            ys = np.array(coverages, dtype=float)
+            slope = float(np.polyfit(xs, ys, 1)[0])
+        else:
+            slope = 0.0
+
+        # Structural score: consecutive streak (saturates at 5 years) + frequency
+        structural_neglect_score = round(
+            0.6 * min(consecutive, 5) / 5 + 0.4 * pct_underfunded, 4
+        )
+
+        latest = coverages[0]
+        if consecutive >= 3 and pct_underfunded >= 0.6:
+            neglect_type = 'structural'
+        elif slope < -0.03 and latest < underfunded_threshold:
+            neglect_type = 'worsening'
+        elif latest < underfunded_threshold:
+            neglect_type = 'acute'
+        elif slope > 0.03 and consecutive < 2:
+            neglect_type = 'improving'
+        else:
+            neglect_type = 'adequate'
+
+        rows.append({
+            'countryCode': country,
+            'cluster': cluster,
+            'consecutive_years_underfunded': consecutive,
+            'structural_neglect_score': structural_neglect_score,
+            'coverage_trend': round(slope, 4),
+            'neglect_type': neglect_type,
+            'n_years_data': n,
+        })
+
+    return pd.DataFrame(rows)
 
 
 def create_aggregate_base() -> pd.DataFrame:
@@ -178,6 +300,11 @@ def create_aggregate_base() -> pd.DataFrame:
     df = pd.merge(df_merged, all_needs, on=['countryCode', 'cluster', 'year'], how='inner')
     df = pd.merge(df, load_ipc_data(), on=['countryCode', 'year', 'cluster'], how='left')
     df = pd.merge(df, load_civilian_events(), on=['countryCode', 'year'], how='left')
+
+    # Enrich with structural neglect signals derived from the full FTS history
+    structural = load_structural_neglect_signals()
+    df = pd.merge(df, structural, on=['countryCode', 'cluster'], how='left')
+
     return df
 
 

@@ -80,6 +80,12 @@ class CrisisRow(BaseModel):
     uncertainty: Optional[float]
     severity_case: Optional[str]  # 'A' | 'B' | 'C' | 'D'
     priority_label: str  # "critical" | "high" | "medium" | "low"
+    # ── Structural neglect signals (from multi-year FTS history) ───────────────
+    consecutive_years_underfunded: Optional[int]
+    structural_neglect_score: Optional[float]  # 0-1, higher = more chronic neglect
+    coverage_trend: Optional[float]  # linear slope per year (negative = worsening)
+    neglect_type: Optional[str]  # 'structural' | 'worsening' | 'acute' | 'improving' | 'adequate'
+    n_years_data: Optional[int]  # years of FTS history used for structural signal
 
     model_config = {"from_attributes": True}
 
@@ -102,6 +108,7 @@ class MetadataResponse(BaseModel):
 _VALID_SORT_FIELDS = {
     "neglect_index", "need_rank", "coverage_rank", "coverage",
     "people_in_need", "ipc_severity_score", "uncertainty",
+    "structural_neglect_score", "consecutive_years_underfunded", "coverage_trend",
     "countryCode", "cluster",
 }
 
@@ -126,6 +133,9 @@ def _row_to_model(row: pd.Series, critical: float, high: float) -> CrisisRow:
         except (TypeError, ValueError):
             return None
 
+    def _opt_str(v: Any) -> str | None:
+        return None if (v is None or (isinstance(v, float) and np.isnan(v))) else str(v)
+
     return CrisisRow(
         countryCode=row['countryCode'],
         countryName=iso3_to_name(row['countryCode']),
@@ -143,8 +153,13 @@ def _row_to_model(row: pd.Series, critical: float, high: float) -> CrisisRow:
         coverage_rank=float(row['coverage_rank']),
         ipc_severity_score=_opt(row.get('ipc_severity_score')),
         uncertainty=_opt(row.get('uncertainty')),
-        severity_case=row.get('severity_case'),
+        severity_case=_opt_str(row.get('severity_case')),
         priority_label=_priority_label(row['neglect_index'], critical, high),
+        consecutive_years_underfunded=_opt_int(row.get('consecutive_years_underfunded')),
+        structural_neglect_score=_opt(row.get('structural_neglect_score')),
+        coverage_trend=_opt(row.get('coverage_trend')),
+        neglect_type=_opt_str(row.get('neglect_type')),
+        n_years_data=_opt_int(row.get('n_years_data')),
     )
 
 
@@ -192,6 +207,12 @@ def get_ranking(
     ] = None,
     min_neglect_index: Annotated[
         Optional[float], Query(ge=0, le=1, description="Only return rows at or above this neglect index threshold")
+    ] = None,
+    neglect_type: Annotated[
+        Optional[list[str]], Query(description="Filter by neglect type(s): structural, worsening, acute, improving, adequate")
+    ] = None,
+    min_consecutive_years: Annotated[
+        Optional[int], Query(ge=0, description="Only include crises underfunded for at least this many consecutive years")
     ] = None,
     # ── Scoring weights ───────────────────────────────────────────────────────
     severity_weight: Annotated[
@@ -274,6 +295,10 @@ def get_ranking(
         df = df[df['coverage'] <= max_coverage]
     if min_neglect_index is not None:
         df = df[df['neglect_index'] >= min_neglect_index]
+    if neglect_type and 'neglect_type' in df.columns:
+        df = df[df['neglect_type'].isin(neglect_type)]
+    if min_consecutive_years is not None and 'consecutive_years_underfunded' in df.columns:
+        df = df[df['consecutive_years_underfunded'] >= min_consecutive_years]
 
     total = len(df)
 
@@ -333,6 +358,8 @@ def get_tsne(
     feature_cols = ['neglect_index', 'coverage', 'need_rank', 'coverage_rank']
     if 'ipc_severity_score' in df.columns:
         feature_cols.append('ipc_severity_score')
+    if 'structural_neglect_score' in df.columns:
+        feature_cols.append('structural_neglect_score')
 
     X = df[feature_cols].fillna(df[feature_cols].mean())
     X_scaled = StandardScaler().fit_transform(X)
@@ -360,6 +387,13 @@ def get_tsne(
         threshold = dists.mean() + 1.5 * dists.std()
         df.loc[grp.index[dists > threshold], 'is_outlier'] = True
 
+    def _tsne_opt(v: Any) -> float | None:
+        try:
+            f = float(v)
+            return None if np.isnan(f) else round(f, 4)
+        except (TypeError, ValueError):
+            return None
+
     return [
         {
             'countryCode': row['countryCode'],
@@ -372,6 +406,9 @@ def get_tsne(
             'coverage': round(float(row['coverage']), 4),
             'people_in_need': float(row['People_In_Need']),
             'is_outlier': bool(row['is_outlier']),
+            'neglect_type': str(row['neglect_type']) if pd.notna(row.get('neglect_type')) else None,
+            'structural_neglect_score': _tsne_opt(row.get('structural_neglect_score')),
+            'consecutive_years_underfunded': int(row['consecutive_years_underfunded']) if pd.notna(row.get('consecutive_years_underfunded')) else None,
         }
         for _, row in df.iterrows()
     ]
