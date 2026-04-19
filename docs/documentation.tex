@@ -586,14 +586,13 @@ The scripts used for data discovery and preliminary analyses was left in `script
 \subsection{Ranking Crises}
 
 After starting both services, open \url{http://localhost:3000}.
-The table on the left displays all crises ranked by the neglect index using the
+The table on the bottom left displays all crises ranked by the neglect index using the
 default weights ($S_w = 0.6$, $G_w = 0.4$).
 
 \begin{itemize}[nosep]
   \item Use the \textbf{filter bar} to restrict by text, cluster, or neglect type.
   \item Toggle between \textbf{cluster view} (one row per country--cluster pair)
         and \textbf{country view} (rolled up to country level).
-  \item Click a column header to re-sort.
   \item Priority labels (\textcolor{critical-red}{critical} /
         \textcolor{high-orange}{high} / medium / low) appear in the first column.
 \end{itemize}
@@ -619,8 +618,10 @@ Drag the funding slider to see in real time:
 
 \begin{itemize}[nosep]
   \item The new neglect index and rank after the hypothetical funding is added.
-  \item The ghost position (original) and new position on the t-SNE chart.
+  \item The new position on the t-SNE chart (where would it land in the embedding space).
 \end{itemize}
+
+The aid can be utilized for \textbf{projecting the possible improvement} caused by an increased funding.
 
 \subsection{Chatbot}
 
