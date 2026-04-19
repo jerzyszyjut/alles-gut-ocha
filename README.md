@@ -2,6 +2,20 @@
 
 Project for humanitarian crisis data exploration, scoring, and visualization.
 
+## Applications views
+
+Main application view:
+
+![Application overview](media/app.png)
+
+Detected outliers view:
+
+![Outliers visualization](media/outliers.png)
+
+t-SNE embedding view:
+
+![t-SNE projection](media/tsne.png)
+
 
 ## Slides
 
