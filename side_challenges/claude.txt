@@ -1,0 +1,79 @@
+Claude integration side challenge - our take
+=============================================================
+
+Overview
+--------
+
+In our app Claude powers the analysis with a goal to make the presented data explainable and
+understandable to the end user (a UN official). We have defined a Q&A chatbot allowing to create filters,
+fetch data from HDX and change the equations responsible for computing designed indexes. The model is
+"methodology-aware" in that it is also provided our data analysis methodology to its context window.
+
+Integration
+------------------------
+
+1. Working with data
+   Claude operates in an agentic loop with access to tools that reach
+   into created data sources:
+
+   - query_ranking          — query our Neglect Index dataset with filters
+   - update_ranking_parameters — modify the frontend scoring weights
+   - hdx_search_locations   — search the UN Humanitarian Data Exchange
+   - hdx_get_humanitarian_needs — fetch real-time people-in-need figures
+   - hdx_get_affected_populations — refugee and IDP counts
+   - hdx_get_food_security  — IPC food security phase data (Phase 3–5)
+   - hdx_get_conflict_events — ACLED armed conflict event data
+   - hdx_get_funding        — FTS financial tracking data
+   - hdx_get_operational_presence — NGO/UN cluster presence by country
+   - hdx_get_dataset_info   — HDX dataset metadata
+
+   Claude autonomously decides which tools to call, chains multiple calls
+   together, and synthesizes the results into an expert analysis and a filtered data frame.
+   This is not a RAG - Claude acts as an agent grounded in real UN data.
+
+2. Bi-Directional Frontend Control (the creative core)
+   The most novel aspect of our integration is that Claude can rewrite the
+   visualization itself. When a user asks "What if we weighted food
+   insecurity more heavily?", Claude doesn't just explain the idea — it
+   calls update_ranking_parameters with new weights, triggering a live
+   re-render of the global rankings map and table in the frontend. 
+   Claude is not just an advisor in that case, but it is a controller 
+   of the analytical instrument itself.
+
+3. Extended Thinking for Complex Analysis
+   When asked to compare a conflict-driven crisis to a
+   climate-driven one across five dimensions, the model thinks deeply before
+   committing to an answer — producing nuanced, evidence-grounded commentary
+   rather than surface-level summaries.
+
+4. Prompt Caching on the Methodology
+   The static system prompt (~4 KB) embeds the full methodology of our
+   Neglect Index - including the complete Python scorer source code (the mentioned "model awareness")
+   - so Claude understands exactly how scores are computed. We cache the prompt across requests,
+   cutting API latency and cost on every message after the first (cache control = ephemeral).
+
+   This means Claude doesn't just describe the ranking - it knows the
+   formula, can explain edge cases, and can reason about what happens when
+   individual parameters change.
+
+
+What Makes It Creative
+----------------------
+
+Most LLM integrations are read-only: the user asks, the model answers, the
+UI stays static. Our integration changes this. Claude is given write access
+to the analytical parameters of the application. A conversation can change
+what the map shows, which countries rank first, and how severity is defined
+— all through natural language.
+
+This turns a humanitarian data dashboard into a collaborative reasoning
+environment. An aid worker can probe the same dataset from entirely different 
+perspective without touching a single slider, whilst keeping the human in the loop.
+
+The system also embeds Claude's own reasoning code (scorer.py) into its
+context, creating a self-aware analysis loop: Claude knows the scoring
+algorithm, can explain its outputs, identify its blind spots, and propose
+modifications that it then executes immediately.
+
+Finally, we integrate Claude with HDX API so it can enrich the limited offline data with
+extensive online-based resources.
