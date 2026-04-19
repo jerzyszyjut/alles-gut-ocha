@@ -5,7 +5,7 @@ Project for humanitarian crisis data exploration, scoring, and visualization.
 
 ## Slides
 
-Presentation slides are available in `slides.pdf` at the repository root.
+Presentation slides are available in `Alles_GUT-Presentation.pdf` at the repository root.
 
 ## Authors
 
