@@ -491,6 +491,16 @@ def _opt(v: Any) -> float | None:
         return None
 
 
+def _priority_label(score: float, critical: float = 0.8, high: float = 0.6) -> str:
+    if score >= critical:
+        return "critical"
+    if score >= high:
+        return "high"
+    if score >= 0.4:
+        return "medium"
+    return "low"
+
+
 def _apply_filters(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     if params.get("last_years") is not None:
         max_year = int(df["year"].max())
@@ -539,6 +549,7 @@ def _execute_query(params: dict, df_base: pd.DataFrame) -> list[dict]:
             "countryName": iso3_to_name(row["countryCode"]),
             "cluster": row["cluster"],
             "people_in_need": float(row["People_In_Need"]),
+            "country_total_pin": _opt(row.get("country_total_pin")),
             "requirements_usd": _opt(row.get("requirements_cluster_specific")),
             "funding_usd": _opt(row.get("funding_cluster_specific")),
             "coverage": round(float(row["coverage"]), 4),
@@ -546,6 +557,7 @@ def _execute_query(params: dict, df_base: pd.DataFrame) -> list[dict]:
             "need_rank": round(float(row["need_rank"]), 4),
             "coverage_rank": round(float(row["coverage_rank"]), 4),
             "ipc_severity_score": _opt(row.get("ipc_severity_score")),
+            "priority_label": _priority_label(float(row["neglect_index"])),
         })
     return rows
 
